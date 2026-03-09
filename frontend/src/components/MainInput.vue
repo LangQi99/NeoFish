@@ -2,6 +2,10 @@
 import { ref } from 'vue'
 import { Plus, ArrowUp, FileText, Globe } from 'lucide-vue-next'
 
+const props = defineProps<{
+  minimal?: boolean
+}>()
+
 const query = ref('')
 const emit = defineEmits(['submit'])
 
@@ -13,9 +17,9 @@ function handleSubmit() {
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center w-full max-w-3xl mx-auto px-4 h-full">
+  <div class="flex flex-col items-center justify-center w-full max-w-3xl mx-auto px-4" :class="{ 'h-full': !minimal }">
     <!-- Centered prominent text in serif -->
-    <h1 class="font-serif text-4xl md:text-5xl lg:text-6xl text-neutral-800 mb-12 tracking-wide font-medium">
+    <h1 v-if="!minimal" class="font-serif text-4xl md:text-5xl lg:text-6xl text-neutral-800 mb-12 tracking-wide font-medium">
       我能为你做什么？
     </h1>
 
@@ -43,7 +47,7 @@ function handleSubmit() {
     </div>
 
     <!-- Suggestion Cards -->
-    <div class="flex gap-4 mt-8 w-full max-w-2xl px-2">
+    <div v-if="!minimal" class="flex gap-4 mt-8 w-full max-w-2xl px-2">
       <button class="flex items-center gap-2 px-4 py-2.5 rounded-full bg-white/60 hover:bg-white border border-neutral-200/50 text-neutral-600 text-sm font-medium transition-all shadow-sm">
         <FileText :size="16" class="text-orange-400" />
         制作演示文稿

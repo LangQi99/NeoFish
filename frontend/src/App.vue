@@ -113,7 +113,7 @@ function resumeAgent() {
 
         <!-- Sticky bottom input -->
         <div class="sticky bottom-0 pt-4 bg-gradient-to-t from-[#FDFBF7] pb-4 backdrop-blur-sm">
-          <MainInput @submit="handleUserSubmit" class="!my-0 !h-auto" />
+          <MainInput :minimal="true" @submit="handleUserSubmit" class="!my-0 !h-auto" />
         </div>
       </div>
     </main>
