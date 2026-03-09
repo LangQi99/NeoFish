@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-neutral-800 antialiased font-sans m-0 p-0 overflow-hidden;
+  }
+}
