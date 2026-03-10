@@ -9,7 +9,8 @@ const props = defineProps<{
 const query = ref('')
 const emit = defineEmits(['submit'])
 
-function handleSubmit() {
+function handleSubmit(e?: Event) {
+  if (e instanceof KeyboardEvent && e.isComposing) return
   if (!query.value.trim()) return
   emit('submit', query.value)
   query.value = ''
