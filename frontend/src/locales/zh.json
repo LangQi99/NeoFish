@@ -34,5 +34,8 @@
     "delete": "删除",
     "yesterday": "昨天",
     "days_ago": "{n} 天前"
+  },
+  "input": {
+    "attach_image": "附加图片"
   }
 }

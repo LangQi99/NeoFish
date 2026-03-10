@@ -148,15 +148,16 @@ async def websocket_endpoint(websocket: WebSocket):
         "session_id": session_id,
     }))
 
-    def _append_message(role: str, content: str):
+    def _append_message(role: str, content: str, images: list = []):
         sessions[session_id]["messages"].append({
             "role": role,
             "content": content,
             "timestamp": datetime.now().isoformat(),
+            "images": images,
         })
         # Auto-title: use first user message (truncated)
         if role == "user" and not sessions[session_id]["title"]:
-            sessions[session_id]["title"] = content[:40]
+            sessions[session_id]["title"] = (content or "📷 Image")[:40]
         _save_sessions()
 
     async def request_human_action(reason: str, b64_image: str):
@@ -185,7 +186,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif msg_type == "user_input":
                 user_msg = payload.get("message", "")
-                _append_message("user", user_msg)
+                user_images = payload.get("images", [])  # list of base64 data-URLs
+                _append_message("user", user_msg, images=user_images)
 
                 async def ws_send_msg(msg):
                     """Accept str or dict from agent.py and normalize to WS payload."""
@@ -198,7 +200,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     _append_message("assistant", human_text)
                     await websocket.send_text(json.dumps(packet))
 
-                asyncio.create_task(run_agent_loop(pm, user_msg, ws_send_msg, request_human_action))
+                asyncio.create_task(run_agent_loop(pm, user_msg, ws_send_msg, request_human_action, images=user_images))
 
     except WebSocketDisconnect:
         print(f"WebSocket client disconnected (session: {session_id})")

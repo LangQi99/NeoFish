@@ -34,5 +34,8 @@
     "delete": "Delete",
     "yesterday": "Yesterday",
     "days_ago": "{n} days ago"
+  },
+  "input": {
+    "attach_image": "Attach image"
   }
 }

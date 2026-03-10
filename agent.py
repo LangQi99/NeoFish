@@ -89,7 +89,7 @@ TOOLS = [
     }
 ]
 
-async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_msg, ws_request_action):
+async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_msg, ws_request_action, images: list = []):
     await ws_send_msg({
         "message": f"Agent starting task: {user_instruction}",
         "message_key": "common.agent_starting",
@@ -100,8 +100,21 @@ async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_m
     max_steps = 15
     is_finished = False
     
-    # First user message includes instruction and initial observation
+    # First user message includes instruction and any user-provided images
     user_content = [{"type": "text", "text": f"Please execute this task: {user_instruction}"}]
+    
+    # Inject user-provided images as vision blocks
+    for data_url in images:
+        # data_url format: "data:<media_type>;base64,<data>"
+        try:
+            header, b64_data = data_url.split(",", 1)
+            media_type = header.split(":")[1].split(";")[0]  # e.g. image/png
+            user_content.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": b64_data}
+            })
+        except Exception as e:
+            print(f"Failed to parse image data-URL: {e}")
     
     for step in range(max_steps):
         # 1. Observe (Append observation to the pending user_content)

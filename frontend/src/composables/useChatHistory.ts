@@ -12,6 +12,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  images?: string[]
 }
 
 const BASE = 'http://localhost:8000'

@@ -79,7 +79,8 @@ async function switchToSession(id: string) {
     hasStarted.value = true
     messages.value = hist.map(m => ({
       type: m.role === 'user' ? 'user' : 'info',
-      message: m.content
+      message: m.content,
+      images: m.images ?? [],
     }))
   }
 
@@ -97,17 +98,18 @@ async function handleNewChat() {
 }
 
 // ─── User submit ───────────────────────────────────────────────────────────
-function handleUserSubmit(query: string) {
+function handleUserSubmit(payload: { text: string; images: string[] }) {
+  const { text, images } = payload
   hasStarted.value = true
-  pushMessage({ type: 'user', message: query })
+  pushMessage({ type: 'user', message: text, images })
   if (ws.value && isConnected.value) {
-    ws.value.send(JSON.stringify({ type: 'user_input', message: query }))
+    ws.value.send(JSON.stringify({ type: 'user_input', message: text, images }))
   }
   // Update title of session in sidebar to first message
   const sid = activeChatId.value
   const session = sessions.value.find(s => s.id === sid)
   if (sid && session && (!session.title || session.title === 'New Chat')) {
-    refreshSession(sid, { title: query.slice(0, 40) })
+    refreshSession(sid, { title: (text || '📷 Image').slice(0, 40) })
   }
 }
 
@@ -165,7 +167,19 @@ onUnmounted(() => {
                class="p-4 rounded-2xl max-w-[85%] animate-fade-in-up"
                :class="msg.type === 'user' ? 'bg-neutral-100 text-neutral-800 ml-auto rounded-tr-sm' : 'bg-white border border-neutral-100 shadow-sm mr-auto rounded-tl-sm'">
             
-            <div v-if="msg.type === 'user'" class="text-[15px] leading-relaxed">{{ msg.message }}</div>
+            <div v-if="msg.type === 'user'" class="flex flex-col gap-2">
+              <!-- Attached images -->
+              <div v-if="msg.images && msg.images.length > 0" class="flex flex-wrap gap-2">
+                <img
+                  v-for="(src, i) in msg.images"
+                  :key="i"
+                  :src="src"
+                  class="max-h-48 max-w-xs rounded-xl object-cover border border-neutral-200/60 shadow-sm"
+                  alt="attached image"
+                />
+              </div>
+              <div v-if="msg.message" class="text-[15px] leading-relaxed">{{ msg.message }}</div>
+            </div>
             
             <div v-else-if="msg.type === 'info'" class="flex gap-3">
               <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
