@@ -11,6 +11,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/dist-ssr/
 *.local
+# vue-tsc type-check artifacts
+frontend/src/**/*.vue.js
+frontend/src/**/*.js
 
 # uv
 .venv/
