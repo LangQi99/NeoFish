@@ -169,6 +169,15 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_text(json.dumps(payload))
         _append_message("assistant", f"[Action Required] {reason}")
 
+    async def send_image(description: str, b64_image: str):
+        payload = {
+            "type": "image",
+            "description": description,
+            "image": b64_image
+        }
+        await websocket.send_text(json.dumps(payload))
+        _append_message("assistant", f"[Image] {description}")
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -200,7 +209,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     _append_message("assistant", human_text)
                     await websocket.send_text(json.dumps(packet))
 
-                asyncio.create_task(run_agent_loop(pm, user_msg, ws_send_msg, request_human_action, images=user_images))
+                asyncio.create_task(run_agent_loop(pm, user_msg, ws_send_msg, request_human_action, send_image, images=user_images))
 
     except WebSocketDisconnect:
         print(f"WebSocket client disconnected (session: {session_id})")

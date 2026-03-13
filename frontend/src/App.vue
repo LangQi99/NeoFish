@@ -190,6 +190,18 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <div v-else-if="msg.type === 'image'" class="flex flex-col gap-3 w-full">
+              <div class="flex gap-3">
+                <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
+                  <span class="text-white text-[10px] font-bold">AI</span>
+                </div>
+                <div class="text-[15px] leading-relaxed text-neutral-700 font-serif">{{ msg.description }}</div>
+              </div>
+              <div class="mt-1 rounded-xl overflow-hidden border border-neutral-200/60 shadow-sm bg-neutral-50/50 p-2">
+                <img :src="'data:image/jpeg;base64,' + msg.image" class="w-full h-auto object-contain max-h-[400px] rounded-lg" alt="Screenshot" />
+              </div>
+            </div>
+
             <div v-else-if="msg.type === 'action_required'" class="flex flex-col gap-4 w-full">
               <div class="flex gap-3">
                 <div class="w-6 h-6 rounded-full bg-orange-500 flex-shrink-0 flex items-center justify-center shadow-sm">

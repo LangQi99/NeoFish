@@ -79,6 +79,15 @@ TOOLS = [
         }
     },
     {
+        "name": "send_screenshot",
+        "description": "Capture and send the current page screenshot to the user. Use this to show the user what you see on the page, share visual results, or provide progress updates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"description": {"type": "string", "description": "A brief description of what the screenshot shows"}},
+            "required": ["description"]
+        }
+    },
+    {
         "name": "finish_task",
         "description": "Call this tool when the final objective is fully accomplished. Pass the final report to the user.",
         "input_schema": {
@@ -89,7 +98,7 @@ TOOLS = [
     }
 ]
 
-async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_msg, ws_request_action, images: list = []):
+async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_msg, ws_request_action, ws_send_image, images: list = []):
     await ws_send_msg({
         "message": f"Agent starting task: {user_instruction}",
         "message_key": "common.agent_starting",
@@ -226,7 +235,16 @@ async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_m
                     
                 elif tool_name == "extract_info":
                     result_str = f"Extracted: {args['info_summary']}"
-                    
+
+                elif tool_name == "send_screenshot":
+                    description = args.get("description", "Current page screenshot")
+                    screenshot_b64 = await pm.get_page_screenshot_base64()
+                    if screenshot_b64:
+                        await ws_send_image(description, screenshot_b64)
+                        result_str = f"Screenshot sent to user: {description}"
+                    else:
+                        result_str = "Failed to capture screenshot."
+
                 elif tool_name == "finish_task":
                     report = args.get("report", "Task completed.")
                     await ws_send_msg({
