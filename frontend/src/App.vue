@@ -59,8 +59,8 @@ watch(messages, scrollToBottom, { deep: true })
 function pushMessage(data: any) {
   messages.value.push(data)
   // Update sidebar preview after agent/user messages
-  if (activeChatId.value && (data.type === 'info' || data.type === 'user')) {
-    const preview = (data.message || '').slice(0, 80)
+  if (activeChatId.value && (data.type === 'info' || data.type === 'user' || data.type === 'screenshot')) {
+    const preview = (data.message || data.caption || '').slice(0, 80)
     refreshSession(activeChatId.value, { preview })
   }
 }
@@ -205,6 +205,21 @@ onUnmounted(() => {
               <button @click="resumeAgent" class="mt-3 px-6 py-2.5 bg-neutral-900 text-white rounded-xl hover:bg-neutral-800 transition-all self-start font-medium text-sm shadow-md active:scale-95">
                 {{ $t('common.resume_button') }}
               </button>
+            </div>
+            <div v-else-if="msg.type === 'screenshot'" class="flex flex-col gap-4 w-full">
+              <div class="flex gap-3">
+                <div class="w-6 h-6 rounded-full bg-blue-500 flex-shrink-0 flex items-center justify-center shadow-sm">
+                  <span class="text-white text-[12px] font-bold">📷</span>
+                </div>
+                <div class="text-[15px] leading-relaxed text-neutral-800 font-medium pt-0.5">
+                  {{ msg.caption || 'Screenshot' }}
+                </div>
+              </div>
+              <div class="mt-2 rounded-xl overflow-hidden border border-neutral-200/60 shadow-sm bg-neutral-50/50 p-2">
+                <img :src="'data:image/jpeg;base64,' + msg.image"
+                     class="w-full h-auto object-contain max-h-[400px] rounded-lg"
+                     alt="Screenshot" />
+              </div>
             </div>
           </div>
         </div>
