@@ -9,6 +9,8 @@ const { sessions, activeChatId, loadSessions, createNewChat, refreshSession } = 
 // ─── WebSocket ─────────────────────────────────────────────────────────────
 const ws = ref<WebSocket | null>(null)
 const isConnected = ref(false)
+// Tracks whether a browser-takeover is currently active
+const isInTakeover = ref(false)
 
 function connectWs(sessionId: string) {
   if (ws.value) {
@@ -29,11 +31,18 @@ function connectWs(sessionId: string) {
     if (data.session_id && data.session_id !== activeChatId.value) {
       activeChatId.value = data.session_id
     }
+    // Handle takeover lifecycle messages
+    if (data.type === 'takeover_started') {
+      isInTakeover.value = true
+    } else if (data.type === 'takeover_ended') {
+      isInTakeover.value = false
+    }
     pushMessage(data)
   }
 
   socket.onclose = () => {
     isConnected.value = false
+    isInTakeover.value = false
     // Re-connect after 3s
     setTimeout(() => {
       if (activeChatId.value) connectWs(activeChatId.value)
@@ -72,6 +81,7 @@ async function switchToSession(id: string) {
   activeChatId.value = id
   messages.value = []
   hasStarted.value = false
+  isInTakeover.value = false
 
   // Load existing messages from backend
   const hist = await loadMessages(id)
@@ -92,6 +102,12 @@ async function switchToSession(id: string) {
             description: m.content.replace('[Image] ', ''),
             image: m.image_data
           }
+        } else if (m.content.startsWith('[Takeover Ended]')) {
+          return {
+            type: 'takeover_ended',
+            message: m.content.replace('[Takeover Ended] ', ''),
+            image: m.image_data
+          }
         }
       }
       return {
@@ -110,6 +126,7 @@ async function handleNewChat() {
   // createNewChat already called in Sidebar → we just switch to the new active session
   messages.value = []
   hasStarted.value = false
+  isInTakeover.value = false
   if (activeChatId.value) {
     connectWs(activeChatId.value)
   }
@@ -135,6 +152,20 @@ function resumeAgent() {
   if (ws.value && isConnected.value) {
     ws.value.send(JSON.stringify({ type: 'resume' }))
     pushMessage({ type: 'info', message: '已发送继续执行指令。' })
+  }
+}
+
+/** Open the headed browser for direct user interaction. */
+function requestTakeover() {
+  if (ws.value && isConnected.value) {
+    ws.value.send(JSON.stringify({ type: 'takeover' }))
+  }
+}
+
+/** Signal that the user is finished without closing the browser window. */
+function signalTakeoverDone() {
+  if (ws.value && isConnected.value) {
+    ws.value.send(JSON.stringify({ type: 'takeover_done' }))
   }
 }
 
@@ -167,10 +198,38 @@ onUnmounted(() => {
     <!-- Main content: offset by sidebar icon rail (w-16 = 64px) -->
     <main class="flex-1 flex flex-col relative h-full" style="margin-left: 64px">
       <!-- Top nav indicator -->
-      <header class="absolute top-0 left-0 w-full p-6 flex justify-end z-10 pointer-events-none">
-        <div class="flex items-center gap-2 bg-white/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-neutral-200/50 shadow-sm">
+      <header class="absolute top-0 left-0 w-full p-6 flex justify-end gap-3 z-10 pointer-events-none">
+        <!-- Takeover banner (shown while headed browser is open) -->
+        <Transition
+          enter-active-class="transition-all duration-300 ease-out"
+          leave-active-class="transition-all duration-200 ease-in"
+          enter-from-class="opacity-0 scale-95"
+          leave-to-class="opacity-0 scale-95"
+        >
+          <div
+            v-if="isInTakeover"
+            class="flex items-center gap-2 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-full shadow-sm pointer-events-auto"
+          >
+            <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
+            <span class="text-xs font-medium text-amber-700">{{ $t('common.takeover_banner') }}</span>
+            <button
+              @click="signalTakeoverDone"
+              class="ml-1 text-xs font-semibold text-amber-800 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-full transition-colors"
+            >{{ $t('common.takeover_done_button') }}</button>
+          </div>
+        </Transition>
+
+        <!-- Agent status indicator + proactive takeover button -->
+        <div class="flex items-center gap-2 bg-white/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-neutral-200/50 shadow-sm pointer-events-auto">
           <div class="w-2 h-2 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-red-500'"></div>
           <span class="text-xs font-medium text-neutral-600">{{ isConnected ? $t('common.agent_ready') : $t('common.connecting') }}</span>
+          <!-- Proactive takeover button (only shown during an active chat) -->
+          <button
+            v-if="hasStarted && isConnected && !isInTakeover"
+            @click="requestTakeover"
+            class="ml-1 text-xs font-semibold text-neutral-500 hover:text-neutral-800 bg-neutral-100 hover:bg-neutral-200 px-2 py-0.5 rounded-full transition-colors"
+            :title="$t('common.proactive_takeover')"
+          >{{ $t('common.proactive_takeover') }}</button>
         </div>
       </header>
       
@@ -208,6 +267,34 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- Takeover started notification -->
+            <div v-else-if="msg.type === 'takeover_started'" class="flex flex-col gap-3 w-full">
+              <div class="flex gap-3">
+                <div class="w-6 h-6 rounded-full bg-amber-500 flex-shrink-0 flex items-center justify-center shadow-sm">
+                  <span class="text-white text-[11px] font-bold">↗</span>
+                </div>
+                <div class="text-[15px] leading-relaxed text-amber-800 font-medium pt-0.5">
+                  {{ $t('common.takeover_started') }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Takeover ended notification (with final screenshot) -->
+            <div v-else-if="msg.type === 'takeover_ended'" class="flex flex-col gap-3 w-full">
+              <div class="flex gap-3">
+                <div class="w-6 h-6 rounded-full bg-green-600 flex-shrink-0 flex items-center justify-center shadow-sm">
+                  <span class="text-white text-[11px] font-bold">✓</span>
+                </div>
+                <div class="text-[15px] leading-relaxed text-neutral-700 font-medium pt-0.5">
+                  {{ msg.message_key ? $t(msg.message_key) : msg.message }}
+                  <span v-if="msg.final_url" class="block text-xs text-neutral-400 mt-0.5 font-mono">{{ msg.final_url }}</span>
+                </div>
+              </div>
+              <div v-if="msg.image" class="mt-1 rounded-xl overflow-hidden border border-neutral-200/60 shadow-sm bg-neutral-50/50 p-2">
+                <img :src="'data:image/jpeg;base64,' + msg.image" class="w-full h-auto object-contain max-h-[400px] rounded-lg" alt="Final page state" />
+              </div>
+            </div>
+
             <div v-else-if="msg.type === 'image'" class="flex flex-col gap-3 w-full">
               <div class="flex gap-3">
                 <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
@@ -232,9 +319,19 @@ onUnmounted(() => {
               <div v-if="msg.image" class="mt-2 rounded-xl overflow-hidden border border-neutral-200/60 shadow-sm bg-neutral-50/50 p-2">
                 <img :src="'data:image/jpeg;base64,' + msg.image" class="w-full h-auto object-contain max-h-[400px] rounded-lg" alt="Action Required" />
               </div>
-              <button @click="resumeAgent" class="mt-3 px-6 py-2.5 bg-neutral-900 text-white rounded-xl hover:bg-neutral-800 transition-all self-start font-medium text-sm shadow-md active:scale-95">
-                {{ $t('common.resume_button') }}
-              </button>
+              <div class="flex flex-wrap gap-3 mt-1">
+                <!-- Take Control: opens headed browser for direct user interaction -->
+                <button
+                  @click="requestTakeover"
+                  class="px-6 py-2.5 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-all font-medium text-sm shadow-md active:scale-95"
+                >
+                  {{ $t('common.takeover_button') }}
+                </button>
+                <!-- Resume: plain signal without opening browser -->
+                <button @click="resumeAgent" class="px-6 py-2.5 bg-neutral-900 text-white rounded-xl hover:bg-neutral-800 transition-all font-medium text-sm shadow-md active:scale-95">
+                  {{ $t('common.resume_button') }}
+                </button>
+              </div>
             </div>
           </div>
         </div>

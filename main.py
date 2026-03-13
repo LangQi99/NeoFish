@@ -17,6 +17,15 @@ from agent import run_agent_loop
 
 pm = PlaywrightManager()
 
+# Prefixes used to tag assistant messages that carry structured data.
+# Keep this list in sync with the matching stripping logic in the WS handler.
+_ASSISTANT_MSG_PREFIXES = (
+    "[Image] ",
+    "[Action Required] ",
+    "[Takeover] ",
+    "[Takeover Ended] ",
+)
+
 # ─── Session Store ────────────────────────────────────────────────────────────
 
 SESSIONS_FILE = Path("sessions.json")
@@ -196,6 +205,67 @@ async def websocket_endpoint(websocket: WebSocket):
                     "message_key": "common.agent_resumed"
                 }))
 
+            elif msg_type == "takeover":
+                # User clicked "Take Control" — open a visible browser window.
+                # Works both during action_required blocks and proactively.
+                if pm.in_takeover:
+                    await websocket.send_text(json.dumps({
+                        "type": "info",
+                        "message": "Takeover is already in progress.",
+                        "message_key": "common.takeover_already_active"
+                    }))
+                else:
+                    # Request agent loop to pause at next safe point
+                    pm.request_pause()
+
+                    async def do_takeover():
+                        # Notify frontend that the headed browser is opening
+                        await websocket.send_text(json.dumps({
+                            "type": "takeover_started",
+                            "message": "Browser opened for manual interaction. Close it when you are done.",
+                            "message_key": "common.takeover_started"
+                        }))
+                        _append_message("assistant", "[Takeover] Browser opened for manual interaction.")
+
+                        await pm.start_takeover()
+
+                        # Block until the user closes the browser or presses "Done"
+                        final_url, final_screenshot = await pm.wait_for_takeover_complete()
+
+                        # Relaunch headless and navigate to where the user left off
+                        await pm.end_takeover(final_url)
+
+                        # Capture a fresh screenshot if we could not grab one on close
+                        if not final_screenshot:
+                            final_screenshot = await pm.get_page_screenshot_base64()
+
+                        # Notify frontend
+                        ended_payload: dict = {
+                            "type": "takeover_ended",
+                            "message": "Takeover ended. AI is resuming.",
+                            "message_key": "common.takeover_ended",
+                            "final_url": final_url,
+                        }
+                        if final_screenshot:
+                            ended_payload["image"] = final_screenshot
+                        await websocket.send_text(json.dumps(ended_payload))
+                        if final_screenshot:
+                            _append_message(
+                                "assistant",
+                                f"[Takeover Ended] Resumed at: {final_url}",
+                                image_data=final_screenshot,
+                            )
+
+                        # Unblock agent loop (resumes both block_for_human waits and
+                        # the proactive-pause check at the top of each step)
+                        pm.resume_from_human()
+
+                    asyncio.create_task(do_takeover())
+
+            elif msg_type == "takeover_done":
+                # User pressed "Done" in the UI without closing the browser window
+                pm.signal_takeover_done()
+
             elif msg_type == "user_input":
                 user_msg = payload.get("message", "")
                 user_images = payload.get("images", [])  # list of base64 data-URLs
@@ -211,7 +281,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     else:
                         # Assistant messages - clean up markers like [Image], [Action Required]
                         clean_content = content
-                        for prefix in ["[Image] ", "[Action Required] "]:
+                        for prefix in _ASSISTANT_MSG_PREFIXES:
                             if clean_content.startswith(prefix):
                                 clean_content = clean_content[len(prefix):]
                         if clean_content:

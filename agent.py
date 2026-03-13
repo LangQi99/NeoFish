@@ -141,6 +141,14 @@ async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_m
 
     
     for step in range(max_steps):
+        # Check if a proactive takeover was requested before this step
+        if pm.check_and_clear_pause_request():
+            await ws_send_msg({
+                "message": "Agent paused for manual takeover. Waiting for you to finish…",
+                "message_key": "common.agent_paused_for_takeover"
+            })
+            await pm.human_intervention_event.wait()
+
         # 1. Observe (Append observation to the pending user_content)
         if pm.page:
             try:
