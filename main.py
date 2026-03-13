@@ -148,13 +148,16 @@ async def websocket_endpoint(websocket: WebSocket):
         "session_id": session_id,
     }))
 
-    def _append_message(role: str, content: str, images: list = []):
-        sessions[session_id]["messages"].append({
+    def _append_message(role: str, content: str, images: list = [], image_data: str = ""):
+        msg = {
             "role": role,
             "content": content,
             "timestamp": datetime.now().isoformat(),
             "images": images,
-        })
+        }
+        if image_data:
+            msg["image_data"] = image_data
+        sessions[session_id]["messages"].append(msg)
         # Auto-title: use first user message (truncated)
         if role == "user" and not sessions[session_id]["title"]:
             sessions[session_id]["title"] = (content or "📷 Image")[:40]
@@ -167,7 +170,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "image": b64_image
         }
         await websocket.send_text(json.dumps(payload))
-        _append_message("assistant", f"[Action Required] {reason}")
+        _append_message("assistant", f"[Action Required] {reason}", image_data=b64_image)
 
     async def send_image(description: str, b64_image: str):
         payload = {
@@ -176,7 +179,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "image": b64_image
         }
         await websocket.send_text(json.dumps(payload))
-        _append_message("assistant", f"[Image] {description}")
+        _append_message("assistant", f"[Image] {description}", image_data=b64_image)
 
     try:
         while True:

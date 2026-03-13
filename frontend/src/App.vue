@@ -77,11 +77,29 @@ async function switchToSession(id: string) {
   const hist = await loadMessages(id)
   if (hist.length > 0) {
     hasStarted.value = true
-    messages.value = hist.map(m => ({
-      type: m.role === 'user' ? 'user' : 'info',
-      message: m.content,
-      images: m.images ?? [],
-    }))
+    messages.value = hist.map(m => {
+      // Check if this is an image message from agent
+      if (m.role === 'assistant' && m.image_data) {
+        if (m.content.startsWith('[Action Required]')) {
+          return {
+            type: 'action_required',
+            reason: m.content.replace('[Action Required] ', ''),
+            image: m.image_data
+          }
+        } else if (m.content.startsWith('[Image]')) {
+          return {
+            type: 'image',
+            description: m.content.replace('[Image] ', ''),
+            image: m.image_data
+          }
+        }
+      }
+      return {
+        type: m.role === 'user' ? 'user' : 'info',
+        message: m.content,
+        images: m.images ?? [],
+      }
+    })
   }
 
   connectWs(id)
