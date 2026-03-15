@@ -1,8 +1,9 @@
+import re
 import asyncio
 import base64
 from pathlib import Path
 from typing import Optional, Callable, Awaitable
-from playwright.async_api import async_playwright, BrowserContext, Page
+from playwright.async_api import async_playwright, BrowserContext, Page, Locator
 
 # Directory to store browser state (cookies, localStorage, etc.)
 BROWSER_STATE_DIR = Path("browser_state")
@@ -11,6 +12,14 @@ _DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+
+# ARIA roles that represent interactive / focusable elements.
+_INTERACTIVE_ROLES = {
+    "button", "link", "textbox", "checkbox", "radio", "combobox",
+    "listbox", "menuitem", "menuitemcheckbox", "menuitemradio",
+    "option", "searchbox", "switch", "tab", "treeitem",
+    "slider", "spinbutton", "gridcell",
+}
 
 
 class PlaywrightManager:
@@ -26,6 +35,8 @@ class PlaywrightManager:
         self._takeover_final_url: str = "about:blank"
         # Flag set by a proactive takeover request so the agent loop pauses
         self._pause_requested: bool = False
+        # Ref map: maps ref IDs (e.g. "e1") to (role, name) tuples
+        self._ref_map: dict[str, tuple[str, str]] = {}
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
@@ -73,6 +84,68 @@ class PlaywrightManager:
             return base64.b64encode(screenshot_bytes).decode("utf-8")
         except Exception:
             return ""
+
+    async def get_aria_snapshot(self) -> str:
+        """
+        Return an annotated ARIA snapshot of the current page.
+
+        Interactive elements (buttons, links, textboxes, etc.) are assigned
+        sequential ref IDs such as ``[ref=e1]``, ``[ref=e2]``, …  The AI can
+        pass these refs to ``click`` / ``type_text`` instead of guessing CSS
+        selectors.
+
+        Example output:
+            - document "My Page":
+              - button "提交" [ref=e1]
+              - textbox "用户名" [ref=e2]
+              - link "忘记密码" [ref=e3]
+        """
+        if not self.page:
+            return ""
+        try:
+            raw_yaml = await self.page.locator("body").aria_snapshot()
+        except Exception:
+            return ""
+
+        self._ref_map = {}
+        counter = 0
+        annotated_lines: list[str] = []
+
+        for line in raw_yaml.splitlines():
+            # Match lines like: "  - button "Submit"" or "  - button "Submit" [level=1]"
+            # The role token is the first word after "- "
+            m = re.match(r'^(\s*- )(\w+)((?:\s+"[^"]*")?)(.*)?$', line)
+            if m:
+                indent_dash, role, quoted_name, rest = m.groups()
+                if role in _INTERACTIVE_ROLES:
+                    counter += 1
+                    ref = f"e{counter}"
+                    # Extract the actual name string (without quotes)
+                    name = quoted_name.strip(' "') if quoted_name else ""
+                    self._ref_map[ref] = (role, name)
+                    annotated_lines.append(
+                        f"{indent_dash}{role}{quoted_name} [ref={ref}]{rest}"
+                    )
+                    continue
+            annotated_lines.append(line)
+
+        return "\n".join(annotated_lines)
+
+    async def locate_by_ref(self, ref: str) -> Locator:
+        """
+        Return a Playwright ``Locator`` for the element identified by *ref*.
+
+        Raises ``ValueError`` if the ref is not present in the last snapshot.
+        """
+        if ref not in self._ref_map:
+            raise ValueError(
+                f"Unknown ref '{ref}'. Call the snapshot tool first, then use the "
+                "ref IDs shown in the output."
+            )
+        role, name = self._ref_map[ref]
+        if name:
+            return self.page.get_by_role(role, name=name)
+        return self.page.get_by_role(role)
 
     async def check_if_login_required(self) -> bool:
         """

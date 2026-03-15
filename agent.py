@@ -15,12 +15,43 @@ model_name = os.getenv("MODEL_NAME", "claude-3-7-sonnet-20250219")
 
 SYSTEM_PROMPT = """You are NeoFish, an autonomous web browser agent.
 Your core task is to complete the user's instructions on the web.
-You have the ability to observe the current page via screenshots and act using tools.
+
+## Observing the page
+You have two complementary ways to observe the current state of the page:
+1. **Screenshots** – visual snapshots that arrive automatically each step.
+2. **snapshot** tool – returns an ARIA accessibility snapshot of the page, listing
+   every interactive element with a stable ref ID, e.g.:
+     - button "提交" [ref=e1]
+     - textbox "用户名" [ref=e2]
+     - link "忘记密码" [ref=e3]
+
+## Interacting with elements
+**Always prefer ref-based interaction** over CSS / XPath selectors:
+- Call `snapshot` to get the current element list with refs.
+- Pass `ref=e1` (or whichever ref) to `click` or `type_text` – the engine
+  will locate the element by its ARIA role and accessible name, which is far
+  more reliable than brittle CSS selectors.
+- Only fall back to a CSS/XPath `selector` when no suitable ref is available.
+
 If you ever encounter a strict login wall, CAPTCHA, or require the user to scan a QR code, you must call the `request_human_assistance` tool. Do NOT give up easily; only ask for help when absolutely necessary.
 When the task is completely finished, call `finish_task`.
 """
 
 TOOLS = [
+    {
+        "name": "snapshot",
+        "description": (
+            "Return an ARIA accessibility snapshot of the current page. "
+            "Each interactive element (button, textbox, link, etc.) is tagged with a "
+            "stable ref ID such as [ref=e1]. Use the refs with the `click` and "
+            "`type_text` tools instead of fragile CSS/XPath selectors."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
     {
         "name": "navigate",
         "description": "Navigate the browser to a specific URL.",
@@ -32,23 +63,47 @@ TOOLS = [
     },
     {
         "name": "click",
-        "description": "Click an element on the page using a CSS or XPath selector.",
+        "description": (
+            "Click an element on the page. "
+            "Prefer passing a `ref` obtained from the `snapshot` tool (e.g. ref=\"e1\"). "
+            "Fall back to a CSS or XPath `selector` only when no ref is available."
+        ),
         "input_schema": {
             "type": "object",
-            "properties": {"selector": {"type": "string"}},
-            "required": ["selector"]
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Ref ID from the snapshot (e.g. \"e1\"). Takes priority over selector."
+                },
+                "selector": {
+                    "type": "string",
+                    "description": "CSS or XPath selector (fallback when ref is not available)."
+                }
+            },
+            "required": []
         }
     },
     {
         "name": "type_text",
-        "description": "Type text into an element.",
+        "description": (
+            "Type text into an input element. "
+            "Prefer passing a `ref` obtained from the `snapshot` tool (e.g. ref=\"e2\"). "
+            "Fall back to a CSS or XPath `selector` only when no ref is available."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "selector": {"type": "string"},
+                "ref": {
+                    "type": "string",
+                    "description": "Ref ID from the snapshot (e.g. \"e2\"). Takes priority over selector."
+                },
+                "selector": {
+                    "type": "string",
+                    "description": "CSS or XPath selector (fallback when ref is not available)."
+                },
                 "text": {"type": "string"}
             },
-            "required": ["selector", "text"]
+            "required": ["text"]
         }
     },
     {
@@ -213,18 +268,41 @@ async def run_agent_loop(pm: PlaywrightManager, user_instruction: str, ws_send_m
             })
             
             try:
-                if tool_name == "navigate":
+                if tool_name == "snapshot":
+                    snapshot_text = await pm.get_aria_snapshot()
+                    if snapshot_text:
+                        result_str = snapshot_text
+                    else:
+                        result_str = "Could not capture aria snapshot."
+
+                elif tool_name == "navigate":
                     await pm.page.goto(args["url"])
                     await asyncio.sleep(2)
                     result_str = "Successfully navigated."
                     
                 elif tool_name == "click":
-                    await pm.page.click(args["selector"], timeout=5000)
+                    ref = args.get("ref")
+                    selector = args.get("selector")
+                    if ref:
+                        locator = await pm.locate_by_ref(ref)
+                        await locator.click(timeout=5000)
+                    elif selector:
+                        await pm.page.click(selector, timeout=5000)
+                    else:
+                        raise ValueError("click requires either 'ref' or 'selector'")
                     await asyncio.sleep(1)
                     result_str = "Successfully clicked."
                     
                 elif tool_name == "type_text":
-                    await pm.page.fill(args["selector"], args["text"])
+                    ref = args.get("ref")
+                    selector = args.get("selector")
+                    if ref:
+                        locator = await pm.locate_by_ref(ref)
+                        await locator.fill(args["text"])
+                    elif selector:
+                        await pm.page.fill(selector, args["text"])
+                    else:
+                        raise ValueError("type_text requires either 'ref' or 'selector'")
                     result_str = "Successfully typed text."
                     
                 elif tool_name == "scroll":
