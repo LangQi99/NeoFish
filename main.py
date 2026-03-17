@@ -4,7 +4,6 @@ load_dotenv()
 import json
 import uuid
 import asyncio
-import base64
 from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -16,6 +15,7 @@ import os
 
 from playwright_manager import PlaywrightManager
 from agent import run_agent_loop
+from platforms.web import WebAdapter
 
 pm = PlaywrightManager()
 
@@ -23,15 +23,6 @@ pm = PlaywrightManager()
 WORKSPACE_DIR = Path(os.getenv("WORKDIR", "./workspace")).resolve()
 UPLOADS_DIR = WORKSPACE_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-
-# Prefixes used to tag assistant messages that carry structured data.
-# Keep this list in sync with the matching stripping logic in the WS handler.
-_ASSISTANT_MSG_PREFIXES = (
-    "[Image] ",
-    "[Action Required] ",
-    "[Takeover] ",
-    "[Takeover Ended] ",
-)
 
 # ─── Session Store ────────────────────────────────────────────────────────────
 
@@ -157,184 +148,22 @@ async def websocket_endpoint(websocket: WebSocket):
         session_id = session["id"]
 
     await websocket.accept()
-    await websocket.send_text(json.dumps({
-        "type": "info",
-        "message": "Connected to NeoFish Agent WebSocket",
-        "message_key": "common.connected_ws",
-        "session_id": session_id,
-    }))
 
-    def _append_message(role: str, content: str, images: list = [], image_data: str = ""):
-        msg = {
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-            "images": images,
-        }
-        if image_data:
-            msg["image_data"] = image_data
-        sessions[session_id]["messages"].append(msg)
-        # Auto-title: use first user message (truncated)
-        if role == "user" and not sessions[session_id]["title"]:
-            sessions[session_id]["title"] = (content or "📷 Image")[:40]
-        _save_sessions()
-
-    async def request_human_action(reason: str, b64_image: str):
-        payload = {
-            "type": "action_required",
-            "reason": reason,
-            "image": b64_image
-        }
-        await websocket.send_text(json.dumps(payload))
-        _append_message("assistant", f"[Action Required] {reason}", image_data=b64_image)
-
-    async def send_image(description: str, b64_image: str):
-        payload = {
-            "type": "image",
-            "description": description,
-            "image": b64_image
-        }
-        await websocket.send_text(json.dumps(payload))
-        _append_message("assistant", f"[Image] {description}", image_data=b64_image)
+    adapter = WebAdapter(
+        websocket=websocket,
+        session_id=session_id,
+        sessions=sessions,
+        save_sessions=_save_sessions,
+        uploads_dir=UPLOADS_DIR,
+        playwright_manager=pm,
+        run_agent=run_agent_loop,
+    )
+    await adapter.start()
 
     try:
         while True:
             data = await websocket.receive_text()
-            payload = json.loads(data)
-
-            msg_type = payload.get("type")
-
-            if msg_type == "resume":
-                pm.resume_from_human()
-                await websocket.send_text(json.dumps({
-                    "type": "info",
-                    "message": "Agent resumed execution.",
-                    "message_key": "common.agent_resumed"
-                }))
-
-            elif msg_type == "takeover":
-                # User clicked "Take Control" — open a visible browser window.
-                # Works both during action_required blocks and proactively.
-                if pm.in_takeover:
-                    await websocket.send_text(json.dumps({
-                        "type": "info",
-                        "message": "Takeover is already in progress.",
-                        "message_key": "common.takeover_already_active"
-                    }))
-                else:
-                    # Request agent loop to pause at next safe point
-                    pm.request_pause()
-
-                    async def do_takeover():
-                        # Notify frontend that the headed browser is opening
-                        await websocket.send_text(json.dumps({
-                            "type": "takeover_started",
-                            "message": "Browser opened for manual interaction. Close it when you are done.",
-                            "message_key": "common.takeover_started"
-                        }))
-                        _append_message("assistant", "[Takeover] Browser opened for manual interaction.")
-
-                        await pm.start_takeover()
-
-                        # Block until the user closes the browser or presses "Done"
-                        final_url, final_screenshot = await pm.wait_for_takeover_complete()
-
-                        # Relaunch headless and navigate to where the user left off
-                        await pm.end_takeover(final_url)
-
-                        # Capture a fresh screenshot if we could not grab one on close
-                        if not final_screenshot:
-                            final_screenshot = await pm.get_page_screenshot_base64()
-
-                        # Notify frontend
-                        ended_payload: dict = {
-                            "type": "takeover_ended",
-                            "message": "Takeover ended. AI is resuming.",
-                            "message_key": "common.takeover_ended",
-                            "final_url": final_url,
-                        }
-                        if final_screenshot:
-                            ended_payload["image"] = final_screenshot
-                        await websocket.send_text(json.dumps(ended_payload))
-                        if final_screenshot:
-                            _append_message(
-                                "assistant",
-                                f"[Takeover Ended] Resumed at: {final_url}",
-                                image_data=final_screenshot,
-                            )
-
-                        # Unblock agent loop (resumes both block_for_human waits and
-                        # the proactive-pause check at the top of each step)
-                        pm.resume_from_human()
-
-                    asyncio.create_task(do_takeover())
-
-            elif msg_type == "takeover_done":
-                # User pressed "Done" in the UI without closing the browser window
-                pm.signal_takeover_done()
-
-            elif msg_type == "user_input":
-                user_msg = payload.get("message", "")
-                user_images = payload.get("images", [])  # list of base64 data-URLs
-
-                # Save uploaded images to workspace and collect paths
-                saved_paths = []
-                for i, data_url in enumerate(user_images):
-                    try:
-                        # Parse data URL: data:image/png;base64,xxxx
-                        header, b64_data = data_url.split(",", 1)
-                        media_type = header.split(":")[1].split(";")[0]  # e.g. image/png
-                        ext = media_type.split("/")[1] if "/" in media_type else "bin"
-                        ext = ext.replace("+xml", "")  # handle svg+xml -> svg
-
-                        # Generate unique filename
-                        filename = f"upload_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.{ext}"
-                        filepath = UPLOADS_DIR / filename
-
-                        # Decode and save
-                        file_bytes = base64.b64decode(b64_data)
-                        filepath.write_bytes(file_bytes)
-
-                        saved_paths.append(str(filepath))
-                    except Exception as e:
-                        print(f"Failed to save uploaded image: {e}")
-
-                _append_message("user", user_msg, images=user_images)
-
-                # Build conversation history from session messages
-                history_messages = []
-                for m in sessions[session_id]["messages"][:-1]:  # Exclude current message
-                    role = m.get("role", "user")
-                    content = m.get("content", "")
-                    if role == "user":
-                        history_messages.append({"role": "user", "content": content or "(user sent an image)"})
-                    else:
-                        # Assistant messages - clean up markers like [Image], [Action Required]
-                        clean_content = content
-                        for prefix in _ASSISTANT_MSG_PREFIXES:
-                            if clean_content.startswith(prefix):
-                                clean_content = clean_content[len(prefix):]
-                        if clean_content:
-                            history_messages.append({"role": "assistant", "content": clean_content})
-
-                async def ws_send_msg(msg):
-                    """Accept str or dict from agent.py and normalize to WS payload."""
-                    if isinstance(msg, dict):
-                        human_text = msg.get("message", "")
-                        packet = {"type": "info", **msg}
-                    else:
-                        human_text = str(msg)
-                        packet = {"type": "info", "message": human_text}
-                    _append_message("assistant", human_text)
-                    await websocket.send_text(json.dumps(packet))
-
-                asyncio.create_task(run_agent_loop(
-                    pm, user_msg, ws_send_msg, request_human_action, send_image,
-                    images=user_images,
-                    history_messages=history_messages,
-                    uploaded_files=saved_paths
-                ))
-
+            await adapter.handle_message(data)
     except WebSocketDisconnect:
         print(f"WebSocket client disconnected (session: {session_id})")
     except Exception as e:
