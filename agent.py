@@ -311,7 +311,7 @@ TOOLS = [
     # Context management
     {
         "name": "compact",
-        "description": "Trigger manual context compression. Use when conversation is getting too long.",
+        "description": "Trigger manual context compression. Use when conversation is getting too long or switching a inrelevant topic and no longer needs the old context. ",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -446,7 +446,7 @@ async def run_agent_loop(
     })
 
     messages = history_messages.copy()
-    max_steps = 100
+    max_steps = 200
     is_finished = False
 
     # Build first user message with context about uploaded files
