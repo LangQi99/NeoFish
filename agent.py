@@ -521,6 +521,8 @@ async def run_agent_loop(
                 "message_key": "common.context_compressing"
             })
             messages[:] = await auto_compact(messages)
+            # Reset user_content after compression to avoid appending old data
+            user_content = []
 
         # 1. Observe - append observation to user_content
         if pm.page:
@@ -736,6 +738,8 @@ async def run_agent_loop(
                 if tool.name == "compact" and tool.input.get("focus"):
                     focus = tool.input["focus"]
             messages[:] = await auto_compact(messages, focus)
+            # Reset user_content after compression
+            user_content = []
 
         if is_finished:
             break
