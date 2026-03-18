@@ -2,6 +2,7 @@
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import MainInput from './components/MainInput.vue'
+import BrowserView from './components/BrowserView.vue'
 import { useChatHistory } from './composables/useChatHistory'
 
 const { sessions, activeChatId, loadSessions, createNewChat, refreshSession } = useChatHistory()
@@ -11,6 +12,10 @@ const ws = ref<WebSocket | null>(null)
 const isConnected = ref(false)
 // Tracks whether a browser-takeover is currently active
 const isInTakeover = ref(false)
+// Embedded browser state
+const browserFrame = ref('')
+const browserUrl = ref('')
+const browserViewport = ref({ width: 1280, height: 800 })
 
 function connectWs(sessionId: string) {
   if (ws.value) {
@@ -34,8 +39,17 @@ function connectWs(sessionId: string) {
     // Handle takeover lifecycle messages
     if (data.type === 'takeover_started') {
       isInTakeover.value = true
+      browserFrame.value = data.image || ''
+      browserUrl.value = data.url || ''
+      browserViewport.value = data.viewport || { width: 1280, height: 800 }
+    } else if (data.type === 'takeover_frame') {
+      // Live screenshot frame — update the embedded browser view only
+      browserFrame.value = data.image || ''
+      browserUrl.value = data.url || browserUrl.value
+      return  // don't push frames into the chat history
     } else if (data.type === 'takeover_ended') {
       isInTakeover.value = false
+      browserFrame.value = ''
     }
     pushMessage(data)
   }
@@ -97,6 +111,7 @@ async function switchToSession(id: string) {
   messages.value = []
   hasStarted.value = false
   isInTakeover.value = false
+  browserFrame.value = ''
 
   // Load existing messages from backend
   const hist = await loadMessages(id)
@@ -142,6 +157,7 @@ async function handleNewChat() {
   messages.value = []
   hasStarted.value = false
   isInTakeover.value = false
+  browserFrame.value = ''
   if (activeChatId.value) {
     connectWs(activeChatId.value)
   }
@@ -172,18 +188,44 @@ function resumeAgent() {
   }
 }
 
-/** Open the headed browser for direct user interaction. */
+/** Request an embedded browser takeover. */
 function requestTakeover() {
   if (ws.value && isConnected.value) {
     ws.value.send(JSON.stringify({ type: 'takeover' }))
   }
 }
 
-/** Signal that the user is finished without closing the browser window. */
+/** Signal that the user is finished with the embedded browser takeover. */
 function signalTakeoverDone() {
   if (ws.value && isConnected.value) {
     ws.value.send(JSON.stringify({ type: 'takeover_done' }))
   }
+}
+
+// ─── Embedded browser input forwarding ────────────────────────────────────
+
+function onBrowserClick(payload: { x: number; y: number; button: string }) {
+  ws.value?.send(JSON.stringify({ type: 'takeover_click', ...payload }))
+}
+
+function onBrowserDblClick(payload: { x: number; y: number }) {
+  ws.value?.send(JSON.stringify({ type: 'takeover_double_click', ...payload }))
+}
+
+function onBrowserKey(payload: { key: string }) {
+  ws.value?.send(JSON.stringify({ type: 'takeover_key', ...payload }))
+}
+
+function onBrowserType(payload: { text: string }) {
+  ws.value?.send(JSON.stringify({ type: 'takeover_type', ...payload }))
+}
+
+function onBrowserScroll(payload: { deltaX: number; deltaY: number }) {
+  ws.value?.send(JSON.stringify({ type: 'takeover_scroll', ...payload }))
+}
+
+function onBrowserNavigate(payload: { url: string }) {
+  ws.value?.send(JSON.stringify({ type: 'takeover_navigate', url: payload.url }))
 }
 
 // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -216,31 +258,11 @@ onUnmounted(() => {
     <main class="flex-1 flex flex-col relative h-full" style="margin-left: 64px">
       <!-- Top nav indicator -->
       <header class="absolute top-0 left-0 w-full p-6 flex justify-end gap-3 z-10 pointer-events-none">
-        <!-- Takeover banner (shown while headed browser is open) -->
-        <Transition
-          enter-active-class="transition-all duration-300 ease-out"
-          leave-active-class="transition-all duration-200 ease-in"
-          enter-from-class="opacity-0 scale-95"
-          leave-to-class="opacity-0 scale-95"
-        >
-          <div
-            v-if="isInTakeover"
-            class="flex items-center gap-2 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-full shadow-sm pointer-events-auto"
-          >
-            <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
-            <span class="text-xs font-medium text-amber-700">{{ $t('common.takeover_banner') }}</span>
-            <button
-              @click="signalTakeoverDone"
-              class="ml-1 text-xs font-semibold text-amber-800 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-full transition-colors"
-            >{{ $t('common.takeover_done_button') }}</button>
-          </div>
-        </Transition>
-
         <!-- Agent status indicator + proactive takeover button -->
         <div class="flex items-center gap-2 bg-white/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-neutral-200/50 shadow-sm pointer-events-auto">
           <div class="w-2 h-2 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-red-500'"></div>
           <span class="text-xs font-medium text-neutral-600">{{ isConnected ? $t('common.agent_ready') : $t('common.connecting') }}</span>
-          <!-- Proactive takeover button (only shown during an active chat) -->
+          <!-- Proactive takeover button (only shown during an active chat when not already in takeover) -->
           <button
             v-if="hasStarted && isConnected && !isInTakeover"
             @click="requestTakeover"
@@ -372,7 +394,7 @@ onUnmounted(() => {
                 <img :src="'data:image/jpeg;base64,' + msg.image" class="w-full h-auto object-contain max-h-[400px] rounded-lg" alt="Action Required" />
               </div>
               <div class="flex flex-wrap gap-3 mt-1">
-                <!-- Take Control: opens headed browser for direct user interaction -->
+                <!-- Take Control: opens embedded browser for direct user interaction -->
                 <button
                   @click="requestTakeover"
                   class="px-6 py-2.5 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-all font-medium text-sm shadow-md active:scale-95"
@@ -394,6 +416,30 @@ onUnmounted(() => {
         </div>
       </div>
     </main>
+
+    <!-- Embedded browser view (shown during takeover) -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition-all duration-300 ease-out"
+        leave-active-class="transition-all duration-200 ease-in"
+        enter-from-class="opacity-0 scale-95"
+        leave-to-class="opacity-0 scale-95"
+      >
+        <BrowserView
+          v-if="isInTakeover"
+          :frame="browserFrame"
+          :url="browserUrl"
+          :viewport="browserViewport"
+          @done="signalTakeoverDone"
+          @click="onBrowserClick"
+          @double-click="onBrowserDblClick"
+          @key="onBrowserKey"
+          @type="onBrowserType"
+          @scroll="onBrowserScroll"
+          @navigate="onBrowserNavigate"
+        />
+      </Transition>
+    </Teleport>
   </div>
 </template>
 

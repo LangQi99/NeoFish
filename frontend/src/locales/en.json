@@ -6,10 +6,10 @@
     "resume_button": "I've processed it, continue",
     "takeover_button": "Take Control",
     "takeover_done_button": "Done",
-    "takeover_started": "Browser is open — close it when you are done",
+    "takeover_started": "Browser embedded — interact directly in the page",
     "takeover_ended": "Takeover ended. AI is resuming…",
     "takeover_already_active": "Takeover is already in progress.",
-    "takeover_banner": "Browser is running — interact directly",
+    "takeover_banner": "Browser embedded — interact directly",
     "proactive_takeover": "Take Over",
     "agent_paused_for_takeover": "Agent paused. Waiting for you to finish…",
     "agent_thinking": "Agent is thinking...",
@@ -49,5 +49,10 @@
   },
   "input": {
     "attach_file": "Attach file or image"
+  },
+  "browser": {
+    "url_placeholder": "Enter URL",
+    "navigate": "Navigate",
+    "loading": "Loading browser..."
   }
 }

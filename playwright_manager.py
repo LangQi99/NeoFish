@@ -37,6 +37,13 @@ class PlaywrightManager:
         self._pause_requested: bool = False
         # Ref map: maps ref IDs (e.g. "e1") to (role, name) tuples
         self._ref_map: dict[str, tuple[str, str]] = {}
+        # Embedded-browser streaming state
+        self._stream_running: bool = False
+        self._stream_task: Optional[asyncio.Task] = None
+        self._stream_callback: Optional[Callable] = None
+        # Browser viewport dimensions sent to the frontend for coordinate mapping
+        self.viewport_width: int = 1280
+        self.viewport_height: int = 800
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
@@ -348,3 +355,101 @@ class PlaywrightManager:
                 print(f"end_takeover: could not navigate to {final_url}: {e}")
 
         return final_url
+
+    # ── Embedded browser streaming (takeover v2) ───────────────────────────────
+
+    async def start_takeover_stream(
+        self,
+        frame_callback: Callable,
+        stream_interval: float = 0.5,
+    ) -> None:
+        """
+        Start streaming screenshots of the current page to *frame_callback*
+        at *stream_interval* second intervals.  The agent browser remains
+        headless — no window is opened.  The frontend displays these frames
+        and forwards input events back via the handle_takeover_* methods.
+        """
+        self._stream_callback = frame_callback
+        self._stream_running = True
+        self._stream_task = asyncio.create_task(
+            self._stream_loop(stream_interval)
+        )
+
+    async def _stream_loop(self, interval: float) -> None:
+        while self._stream_running:
+            try:
+                if self.page and not self.page.is_closed():
+                    screenshot = await self.get_page_screenshot_base64()
+                    url = self.page.url
+                    if screenshot and self._stream_callback:
+                        await self._stream_callback(screenshot, url)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"Takeover stream error: {e}")
+            await asyncio.sleep(interval)
+
+    def stop_takeover_stream(self) -> None:
+        """Stop the screenshot streaming loop."""
+        self._stream_running = False
+        if self._stream_task and not self._stream_task.done():
+            self._stream_task.cancel()
+        self._stream_task = None
+        self._stream_callback = None
+
+    def begin_embedded_takeover(self) -> asyncio.Event:
+        """
+        Mark the manager as being in a streaming takeover and return the
+        asyncio.Event that will be set when the user signals completion.
+        """
+        self._in_takeover = True
+        self._takeover_event = asyncio.Event()
+        return self._takeover_event
+
+    def end_embedded_takeover(self) -> None:
+        """Clean up streaming takeover state after the user signals done."""
+        self.stop_takeover_stream()
+        self._in_takeover = False
+        self._takeover_event = None
+
+    async def handle_takeover_click(
+        self, x: float, y: float, button: str = "left"
+    ) -> None:
+        """Forward a mouse click to the browser at page coordinates (x, y)."""
+        if self.page and not self.page.is_closed():
+            await self.page.mouse.click(x, y, button=button)
+
+    async def handle_takeover_double_click(self, x: float, y: float) -> None:
+        """Forward a double-click to the browser at page coordinates (x, y)."""
+        if self.page and not self.page.is_closed():
+            await self.page.mouse.dblclick(x, y)
+
+    async def handle_takeover_mouse_move(self, x: float, y: float) -> None:
+        """Move the mouse to page coordinates (x, y) in the browser."""
+        if self.page and not self.page.is_closed():
+            await self.page.mouse.move(x, y)
+
+    async def handle_takeover_key(self, key: str) -> None:
+        """Press a key in the browser (uses Playwright key names, e.g. 'Enter')."""
+        if self.page and not self.page.is_closed():
+            await self.page.keyboard.press(key)
+
+    async def handle_takeover_type(self, text: str) -> None:
+        """Type a string of characters into the browser's focused element."""
+        if self.page and not self.page.is_closed():
+            await self.page.keyboard.type(text)
+
+    async def handle_takeover_scroll(
+        self, delta_x: float, delta_y: float
+    ) -> None:
+        """Dispatch a wheel event in the browser."""
+        if self.page and not self.page.is_closed():
+            await self.page.mouse.wheel(delta_x, delta_y)
+
+    async def handle_takeover_navigate(self, url: str) -> None:
+        """Navigate the browser to *url* during a takeover session."""
+        if self.page and not self.page.is_closed():
+            try:
+                await self.page.goto(url, timeout=15000)
+            except Exception as e:
+                print(f"Takeover navigate error: {e}")

@@ -250,6 +250,20 @@ class WebAdapter(PlatformAdapter):
             await self._handle_takeover()
         elif msg_type == "takeover_done":
             self._pm.signal_takeover_done()
+        elif msg_type == "takeover_click":
+            await self._handle_takeover_click(payload)
+        elif msg_type == "takeover_double_click":
+            await self._handle_takeover_double_click(payload)
+        elif msg_type == "takeover_mouse_move":
+            await self._handle_takeover_mouse_move(payload)
+        elif msg_type == "takeover_key":
+            await self._handle_takeover_key(payload)
+        elif msg_type == "takeover_type":
+            await self._handle_takeover_type(payload)
+        elif msg_type == "takeover_scroll":
+            await self._handle_takeover_scroll(payload)
+        elif msg_type == "takeover_navigate":
+            await self._handle_takeover_navigate(payload)
         elif msg_type == "user_input":
             await self._handle_user_input(payload)
 
@@ -273,19 +287,60 @@ class WebAdapter(PlatformAdapter):
         self._pm.request_pause()
 
         async def do_takeover() -> None:
+            # Capture current URL and initial screenshot before handing over.
+            current_url: str = "about:blank"
+            try:
+                if self._pm.page and not self._pm.page.is_closed():
+                    current_url = self._pm.page.url
+            except Exception:
+                pass
+
+            initial_screenshot = await self._pm.get_page_screenshot_base64()
+
             await self._ws.send_text(json.dumps({
                 "type": "takeover_started",
-                "message": "Browser opened for manual interaction. Close it when you are done.",
+                "message": "Browser embedded for manual interaction.",
                 "message_key": "common.takeover_started",
+                "url": current_url,
+                "image": initial_screenshot,
+                "viewport": {
+                    "width": self._pm.viewport_width,
+                    "height": self._pm.viewport_height,
+                },
             }))
             self._append_message("assistant", "[Takeover] Browser opened for manual interaction.")
 
-            await self._pm.start_takeover()
-            final_url, final_screenshot = await self._pm.wait_for_takeover_complete()
-            await self._pm.end_takeover(final_url)
+            # Mark as in takeover and create the completion event.
+            done_event = self._pm.begin_embedded_takeover()
 
-            if not final_screenshot:
-                final_screenshot = await self._pm.get_page_screenshot_base64()
+            # Stream screenshots to the frontend.
+            async def send_frame(screenshot_b64: str, url: str) -> None:
+                try:
+                    await self._ws.send_text(json.dumps({
+                        "type": "takeover_frame",
+                        "image": screenshot_b64,
+                        "url": url,
+                    }))
+                except Exception as e:
+                    print(f"Takeover frame send error: {e}")
+
+            await self._pm.start_takeover_stream(send_frame, stream_interval=0.5)
+
+            # Block until the user signals "done".
+            await done_event.wait()
+
+            # Stop streaming and clean up takeover state.
+            self._pm.end_embedded_takeover()
+
+            # Collect final state.
+            final_url: str = "about:blank"
+            final_screenshot: str = ""
+            try:
+                if self._pm.page and not self._pm.page.is_closed():
+                    final_url = self._pm.page.url
+                    final_screenshot = await self._pm.get_page_screenshot_base64()
+            except Exception:
+                pass
 
             ended_payload: dict = {
                 "type": "takeover_ended",
@@ -306,6 +361,44 @@ class WebAdapter(PlatformAdapter):
             self._pm.resume_from_human()
 
         asyncio.create_task(do_takeover())
+
+    # ── Takeover input forwarding ─────────────────────────────────────────────
+
+    async def _handle_takeover_click(self, payload: dict) -> None:
+        x = float(payload.get("x", 0))
+        y = float(payload.get("y", 0))
+        button = payload.get("button", "left")
+        await self._pm.handle_takeover_click(x, y, button)
+
+    async def _handle_takeover_double_click(self, payload: dict) -> None:
+        x = float(payload.get("x", 0))
+        y = float(payload.get("y", 0))
+        await self._pm.handle_takeover_double_click(x, y)
+
+    async def _handle_takeover_mouse_move(self, payload: dict) -> None:
+        x = float(payload.get("x", 0))
+        y = float(payload.get("y", 0))
+        await self._pm.handle_takeover_mouse_move(x, y)
+
+    async def _handle_takeover_key(self, payload: dict) -> None:
+        key = payload.get("key", "")
+        if key:
+            await self._pm.handle_takeover_key(key)
+
+    async def _handle_takeover_type(self, payload: dict) -> None:
+        text = payload.get("text", "")
+        if text:
+            await self._pm.handle_takeover_type(text)
+
+    async def _handle_takeover_scroll(self, payload: dict) -> None:
+        delta_x = float(payload.get("deltaX", 0))
+        delta_y = float(payload.get("deltaY", 0))
+        await self._pm.handle_takeover_scroll(delta_x, delta_y)
+
+    async def _handle_takeover_navigate(self, payload: dict) -> None:
+        url = payload.get("url", "")
+        if url:
+            await self._pm.handle_takeover_navigate(url)
 
     async def _handle_user_input(self, payload: dict) -> None:
         user_msg: str = payload.get("message", "")
