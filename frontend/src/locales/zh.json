@@ -6,10 +6,10 @@
     "resume_button": "我已处理完毕，继续执行",
     "takeover_button": "接管浏览器",
     "takeover_done_button": "完成操作",
-    "takeover_started": "浏览器已开启，操作完成后关闭即可",
+    "takeover_started": "浏览器已嵌入页面，您可在此直接操作",
     "takeover_ended": "接管结束，AI 正在继续执行…",
     "takeover_already_active": "接管操作正在进行中。",
-    "takeover_banner": "浏览器已在运行，您可直接操作",
+    "takeover_banner": "浏览器已嵌入，您可直接操作",
     "proactive_takeover": "手动接管",
     "agent_paused_for_takeover": "代理已暂停，等待您完成操作…",
     "agent_thinking": "代理正在思考...",
@@ -49,5 +49,10 @@
   },
   "input": {
     "attach_file": "附加文件或图片"
+  },
+  "browser": {
+    "url_placeholder": "输入网址",
+    "navigate": "导航",
+    "loading": "正在加载浏览器..."
   }
 }
