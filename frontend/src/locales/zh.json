@@ -35,7 +35,9 @@
     "explore": "探索",
     "chat": "对话历史",
     "gallery": "图库",
-    "settings": "设置"
+    "settings": "设置",
+    "debug_on": "调试模式：已开启",
+    "debug_off": "调试模式：已关闭"
   },
   "history": {
     "panel_title": "对话列表",
@@ -54,5 +56,25 @@
     "url_placeholder": "输入网址",
     "navigate": "导航",
     "loading": "正在加载浏览器..."
+  },
+  "tools": {
+    "navigate": "正在访问网页",
+    "click": "正在点击",
+    "type_text": "正在输入",
+    "scroll": "正在滚动",
+    "snapshot": "正在分析页面",
+    "request_human_assistance": "等待您的确认",
+    "go_back": "正在返回上一页",
+    "go_forward": "正在前进",
+    "wait": "正在等待",
+    "new_tab": "正在打开新标签页",
+    "switch_tab": "正在切换标签页",
+    "close_tab": "正在关闭标签页",
+    "finish_task": "完成任务",
+    "default": "正在执行操作"
+  },
+  "status": {
+    "thinking": "正在思考...",
+    "completed": "完成思考"
   }
 }

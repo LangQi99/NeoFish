@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PlaySquare, Settings, Compass, LayoutGrid, Languages } from 'lucide-vue-next'
+import { PlaySquare, Settings, Compass, LayoutGrid, Languages, Bug } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
+import { useDebugMode } from '../composables/useDebugMode'
 
 const { locale, t } = useI18n()
+const { debugMode, toggleDebug } = useDebugMode()
 const emit = defineEmits<{
   (e: 'new-chat'): void
   (e: 'select-chat', id: string): void
@@ -60,6 +62,15 @@ function handleSelectChat(id: string) {
         >
           <Languages :size="20" stroke-width="2" />
           <span class="text-[9px] font-bold uppercase">{{ locale === 'zh' ? 'EN' : 'ZH' }}</span>
+        </button>
+
+        <button
+          @click="toggleDebug"
+          class="p-2 rounded-xl transition-all"
+          :class="debugMode ? 'text-amber-600 bg-amber-50' : 'text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100'"
+          :title="debugMode ? $t('sidebar.debug_on') : $t('sidebar.debug_off')"
+        >
+          <Bug :size="20" stroke-width="2" />
         </button>
 
         <button :title="$t('sidebar.settings')" class="p-2 rounded-xl text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100 transition-colors">

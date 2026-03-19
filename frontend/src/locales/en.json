@@ -35,7 +35,9 @@
     "explore": "Explore",
     "chat": "Chat History",
     "gallery": "Gallery",
-    "settings": "Settings"
+    "settings": "Settings",
+    "debug_on": "Debug Mode: On",
+    "debug_off": "Debug Mode: Off"
   },
   "history": {
     "panel_title": "Chats",
@@ -54,5 +56,25 @@
     "url_placeholder": "Enter URL",
     "navigate": "Navigate",
     "loading": "Loading browser..."
+  },
+  "tools": {
+    "navigate": "Visiting page",
+    "click": "Clicking",
+    "type_text": "Typing",
+    "scroll": "Scrolling",
+    "snapshot": "Analyzing page",
+    "request_human_assistance": "Waiting for your confirmation",
+    "go_back": "Going back",
+    "go_forward": "Going forward",
+    "wait": "Waiting",
+    "new_tab": "Opening new tab",
+    "switch_tab": "Switching tab",
+    "close_tab": "Closing tab",
+    "finish_task": "Finishing task",
+    "default": "Executing action"
+  },
+  "status": {
+    "thinking": "Thinking...",
+    "completed": "Finished thinking"
   }
 }

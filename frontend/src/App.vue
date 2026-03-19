@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { marked } from 'marked'
 import Sidebar from './components/Sidebar.vue'
 import MainInput from './components/MainInput.vue'
 import BrowserView from './components/BrowserView.vue'
 import { useChatHistory } from './composables/useChatHistory'
+import { useDebugMode } from './composables/useDebugMode'
 
+const { t } = useI18n()
 const { sessions, activeChatId, loadSessions, createNewChat, refreshSession } = useChatHistory()
+const { debugMode } = useDebugMode()
 
 // ─── WebSocket ─────────────────────────────────────────────────────────────
 const ws = ref<WebSocket | null>(null)
@@ -94,9 +99,58 @@ function scrollToBottomIfNearBottom() {
 
 watch(messages, scrollToBottomIfNearBottom, { deep: true })
 
+function isThinkingMessage(msg: any): boolean {
+  return msg.message_key === 'common.agent_thinking' || 
+         (msg.message && msg.message.includes('thinking'))
+}
+
+function isToolCallMessage(msg: any): boolean {
+  return msg.message_key === 'common.executing_action' || 
+         (msg.message && msg.message.startsWith('Executing action:'))
+}
+
+function isTechMessage(msg: any): boolean {
+  return isThinkingMessage(msg) || isToolCallMessage(msg) || isHiddenMessage(msg)
+}
+
+function isHiddenMessage(msg: any): boolean {
+  const hiddenKeys = ['common.connected_ws', 'common.context_compressing', 'common.manual_compressing', 'common.agent_resumed', 'common.sent_resume']
+  if (hiddenKeys.includes(msg.message_key)) return true
+  if (msg.message === 'Connected to NeoFish Agent WebSocket') return true
+  if (msg.message && msg.message.includes('Context threshold reached')) return true
+  if (msg.message && msg.message.includes('Manual compression')) return true
+  if (msg.message && msg.message.includes('已发送继续执行')) return true
+  return false
+}
+
+function getToolName(msg: any): string | null {
+  if (msg.params?.tool) return msg.params.tool
+  const match = msg.message?.match(/Executing action: `(\w+)`/)
+  return match ? match[1] : null
+}
+
+function getToolDisplayName(toolName: string): string {
+  const key = `tools.${toolName}`
+  const translated = t(key)
+  return translated === key ? t('tools.default') : translated
+}
+
+function renderMarkdown(text: string): string {
+  return marked.parse(text) as string
+}
+
 function pushMessage(data: any) {
+  if (!isHiddenMessage(data) && !isTechMessage(data)) {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const msg = messages.value[i]
+      if (isToolCallMessage(msg) && !msg._completed) {
+        msg._completed = true
+      } else if (!isTechMessage(msg)) {
+        break
+      }
+    }
+  }
   messages.value.push(data)
-  // Update sidebar preview after agent/user messages
   if (activeChatId.value && (data.type === 'info' || data.type === 'user')) {
     const preview = (data.message || '').slice(0, 80)
     refreshSession(activeChatId.value, { preview })
@@ -308,12 +362,32 @@ onUnmounted(() => {
             </div>
             
             <div v-else-if="msg.type === 'info'" class="flex gap-3">
-              <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
-                <span class="text-white text-[10px] font-bold">AI</span>
-              </div>
-              <div class="text-[15px] leading-relaxed text-neutral-700 font-serif">
-                {{ msg.type === 'info' && msg.message === 'Connected to NeoFish Agent WebSocket' ? $t('common.connected_ws') : (msg.message_key ? $t(msg.message_key, msg.params || {}) : msg.message) }}
-              </div>
+              <template v-if="isHiddenMessage(msg) && !debugMode"></template>
+              <template v-else-if="isThinkingMessage(msg) && !debugMode">
+                <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
+                  <span class="text-white text-[10px] font-bold">AI</span>
+                </div>
+                <div class="text-[15px] leading-relaxed text-neutral-700 font-serif">
+                  {{ $t('status.thinking') }}
+                </div>
+              </template>
+              <template v-else-if="isToolCallMessage(msg) && !debugMode">
+                <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
+                  <span class="text-white text-[10px] font-bold">AI</span>
+                </div>
+                <div class="text-[15px] leading-relaxed text-neutral-700 font-serif">
+                  {{ msg._completed ? $t('status.completed') : getToolDisplayName(getToolName(msg) || '') }}
+                </div>
+              </template>
+              <template v-else>
+                <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
+                  <span class="text-white text-[10px] font-bold">AI</span>
+                </div>
+                <div 
+                  class="text-[15px] leading-relaxed text-neutral-700 font-serif prose prose-sm prose-neutral max-w-none"
+                  v-html="renderMarkdown(msg.message_key ? $t(msg.message_key, msg.params || {}) : msg.message)"
+                ></div>
+              </template>
             </div>
 
             <!-- Takeover started notification -->

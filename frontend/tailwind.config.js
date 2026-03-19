@@ -11,12 +11,14 @@ export default {
         serif: ['Noto Serif SC', 'Source Han Serif', 'Songti SC', 'ui-serif', 'Georgia', 'serif'],
       },
       colors: {
-        background: '#FDFBF7', // warm beige / off-white
+        background: '#FDFBF7',
       },
       boxShadow: {
         'soft': '0 20px 40px -15px rgba(0, 0, 0, 0.05)',
       }
     },
   },
-  plugins: [],
+  plugins: [
+    require('@tailwindcss/typography'),
+  ],
 }
