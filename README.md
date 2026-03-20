@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/readme_img/readme_icon.png" width="120" alt="NeoFish Logo" />
+  <img src="docs/readme_img/new_icon.png" width="120" alt="NeoFish Logo" />
   <h1>NeoFish 🐟</h1>
   <p><strong>人人可用的 Agent，你的终极数字奴隶</strong></p>
 
