@@ -47,6 +47,20 @@ NeoFish 采用轻量级的前后端分离架构设计：
   - 实时渲染 Agent 的执行动作、日志和错误提示。
   - 内置完整的国际化语言包。
 
+## 🖥️ 平台支持
+
+NeoFish 支持多种接入平台，可按需选择一种或同时运行多种：
+
+| 平台 | 说明 | 启动方式 |
+|------|------|----------|
+| 🌐 **Web** | 内置 Vue 3 网页界面，开箱即用 | `uv run uvicorn main:app --reload` |
+| 💬 **Telegram** | 通过 Telegram Bot API 接入，随时随地使用 | `uv run python run_telegram.py` |
+| 🐧 **QQ** | 通过 NapCat / go-cqhttp (OneBot v11) 接入 QQ | `uv run python run_qq.py` |
+
+> 💡 也可以使用 `uv run python run_all.py` **同时启动所有已配置的平台**。
+
+---
+
 ## 🚀 快速开始
 
 ### 1. 环境准备
@@ -90,6 +104,60 @@ npm install
 npm run dev
 ```
 *打开浏览器访问 `http://localhost:5173` 即可开始体验！*
+
+---
+
+## 🔌 平台接入指南
+
+### 💬 Telegram Bot
+
+1. 在 Telegram 中找到 [@BotFather](https://t.me/BotFather)，创建一个新 Bot 并获取 Token。
+2. 在 `.env` 中添加以下配置：
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# 可选：只允许指定用户使用（留空则允许所有人）
+# TELEGRAM_ALLOWED_USERS=123456789,987654321
+```
+
+3. 安装依赖并启动：
+
+```bash
+uv add python-telegram-bot
+uv run python run_telegram.py
+```
+
+### 🐧 QQ Bot (NapCat / go-cqhttp)
+
+1. 安装并启动 [NapCat](https://github.com/NapNeko/NapCatQQ)，使用 QQ 账号登录。
+2. 在 NapCat 中开启**正向 WebSocket** 插件（默认端口 3001）。
+3. 在 `.env` 中添加以下配置：
+
+```env
+QQ_WS_URL=ws://127.0.0.1:3001
+
+# 可选：NapCat 访问令牌（未配置则留空）
+# QQ_ACCESS_TOKEN=
+
+# 可选：只允许指定用户/群使用（留空则允许所有人）
+# QQ_ALLOWED_IDS=group_123456,private_987654
+```
+
+4. 启动 QQ Bot：
+
+```bash
+uv run python run_qq.py
+```
+
+### 🚀 同时启动所有平台
+
+```bash
+uv run python run_all.py
+```
+
+> 系统会根据 `.env` 中的配置自动决定启用哪些平台：Web 始终启动，Telegram 和 QQ 仅在对应 Token / URL 已配置时才会启动。
+
 ## 💡 使用场景示例
 
 你可以对 NeoFish 说出以下指令：
