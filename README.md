@@ -7,7 +7,11 @@
     <a href="https://github.com/LangQi99/NeoFish/stargazers"><img src="https://img.shields.io/github/stars/LangQi99/NeoFish?style=for-the-badge&color=00D4E4" alt="Stars"></a>
     <a href="https://github.com/LangQi99/NeoFish/network/members"><img src="https://img.shields.io/github/forks/LangQi99/NeoFish?style=for-the-badge&color=00D4E4" alt="Forks"></a>
     <img src="https://img.shields.io/badge/Python-3.11+-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+    <img src="https://img.shields.io/badge/uv-Ready-DE5FE9?style=for-the-badge&logo=uv&logoColor=white" alt="uv">
     <img src="https://img.shields.io/badge/Vue.js-3.5+-4FC08D?style=for-the-badge&logo=vue.js&logoColor=white" alt="Vue">
+    <img src="https://img.shields.io/badge/Platform-Web-1E88E5?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Web">
+    <img src="https://img.shields.io/badge/Platform-Telegram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram">
+    <img src="https://img.shields.io/badge/Platform-QQ-12B7F5?style=for-the-badge&logo=tencentqq&logoColor=white" alt="QQ">
   </p>
 </div>
 
@@ -28,6 +32,7 @@
 </p>
 
 - 🤖 **全能浏览器交互**: 深度集成 `Playwright` 引擎，支持页面导航、元素点击、键盘输入、滚动和截图分析。
+- 🌐 **多平台兼容接入**: 当前已支持 `Web`、`Telegram (TG)`、`QQ` 三端接入，同一套 Agent 核心可复用到不同平台。
 - ⚡️ **极速实时流式响应**: 基于 `FastAPI` 和 `WebSocket` 架构，实现后台 Agent 思考过程与前端 UI 的毫秒级状态同步。
 - 🎨 **现代化丝滑前端 UI**: 采用 `Vue 3` + `Tailwind CSS` 打造的极简质感界面，内置流畅的对话滚动与状态指示。
 - 🌍 **原生多语言支持**: 完整的中英文 (`i18n`) 支持，侧边栏一键顺滑切换。
@@ -46,16 +51,9 @@ NeoFish 采用轻量级的前后端分离架构设计：
   - 负责与用户的交互可视化。
   - 实时渲染 Agent 的执行动作、日志和错误提示。
   - 内置完整的国际化语言包。
-
-## 💻 平台支持
-
-| 平台 | 状态 | 说明 |
-|------|------|------|
-| macOS | ✅ 完全支持 | 开发和生产环境均测试通过 |
-| Linux | ✅ 完全支持 | 需要安装 Playwright 系统依赖 |
-| Windows | ⚠️ 实验性支持 | 功能可用，但可能存在兼容性问题 |
-
-> **注意**: 后端依赖 Playwright 浏览器引擎，首次运行时会自动下载所需的浏览器二进制文件。
+- **平台适配层 (Platform Adapters)**: `Web` / `Telegram (TG)` / `QQ`
+  - 统一将不同平台消息转换为同一套 Agent 输入输出协议。
+  - 可按配置单独启动，也可通过 `run_all.py` 同时运行多个平台入口。
 
 ## 🚀 快速开始
 
@@ -77,7 +75,6 @@ cd NeoFish
 ```env
 ANTHROPIC_API_KEY=your_api_key_here
 ANTHROPIC_BASE_URL=https://api.your-proxy.com
-# 推荐使用具备强大推理与 Tool Call 能力的模型
 MODEL_NAME=claude-3-7-sonnet-20250219 
 ```
 
