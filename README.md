@@ -76,9 +76,13 @@ MODEL_NAME=claude-3-7-sonnet-20250219
 后端将自动安装所需依赖并启动网页交互引擎（首次运行可能会下载浏览器内核）：
 
 ```bash
-uv run uvicorn main:app --reload
+uv run uvicorn main:app
 ```
 *服务将运行在 `http://127.0.0.1:8000`*
+
+说明：
+
+- 如在 macOS / Linux 开发环境中需要热重载，可自行追加 `--reload`，但在 Windows 上可能发生事件循环兼容问题。
 
 ### 5. 启动前端 (UI 界面)
 
