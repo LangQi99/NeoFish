@@ -61,13 +61,13 @@ function formatDate(iso: string) {
 <template>
   <div class="flex flex-col h-full">
     <!-- Header -->
-    <div class="px-3 py-4 border-b border-neutral-100">
-      <h2 class="text-xs font-semibold text-neutral-500 uppercase tracking-widest mb-3">
+    <div class="border-b px-3 py-4" style="border-color: var(--border-muted);">
+      <h2 class="theme-text-muted mb-3 text-xs font-semibold uppercase tracking-widest">
         {{ $t('history.panel_title') }}
       </h2>
       <button
         @click="handleNewChat"
-        class="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-neutral-900 text-white text-sm font-medium hover:bg-neutral-700 transition-all active:scale-95"
+        class="theme-button-strong flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-all active:scale-95"
       >
         <Plus :size="16" />
         {{ $t('history.new_chat') }}
@@ -75,8 +75,8 @@ function formatDate(iso: string) {
     </div>
 
     <!-- Sessions list -->
-    <div class="flex-1 overflow-y-auto py-2 custom-scrollbar">
-      <div v-if="sessions.length === 0" class="flex flex-col items-center justify-center h-40 text-neutral-400 gap-2">
+    <div class="theme-scrollbar flex-1 overflow-y-auto py-2">
+      <div v-if="sessions.length === 0" class="theme-text-muted flex h-40 flex-col items-center justify-center gap-2">
         <MessageSquare :size="28" stroke-width="1.5" />
         <p class="text-xs">{{ $t('history.empty_state') }}</p>
       </div>
@@ -86,8 +86,8 @@ function formatDate(iso: string) {
         :key="session.id"
         class="group mx-2 mb-1 rounded-xl transition-all cursor-pointer"
         :class="session.id === activeChatId
-          ? 'bg-neutral-100'
-          : 'hover:bg-neutral-50'"
+          ? 'theme-card-soft'
+          : 'hover:bg-[var(--surface-soft)]'"
         @click="handleSelect(session.id)"
       >
         <!-- Editing mode -->
@@ -96,14 +96,15 @@ function formatDate(iso: string) {
             v-model="editingTitle"
             @keydown.enter="confirmRename(session.id)"
             @keydown.esc="cancelRename"
-            class="flex-1 text-sm text-neutral-800 bg-white border border-neutral-300 rounded-lg px-2 py-1 outline-none focus:border-neutral-500"
+            class="theme-text-primary flex-1 rounded-lg border px-2 py-1 text-sm outline-none"
+            style="background: var(--surface); border-color: var(--border-strong);"
             :placeholder="$t('history.rename_placeholder')"
             autofocus
           />
           <button @click="confirmRename(session.id)" class="p-1 text-green-600 hover:bg-green-50 rounded-md transition-colors">
             <Check :size="14" />
           </button>
-          <button @click="cancelRename" class="p-1 text-neutral-400 hover:bg-neutral-100 rounded-md transition-colors">
+          <button @click="cancelRename" class="theme-text-muted rounded-md p-1 transition-colors hover:bg-[var(--surface-soft)]">
             <X :size="14" />
           </button>
         </div>
@@ -111,27 +112,27 @@ function formatDate(iso: string) {
         <!-- Normal mode -->
         <div v-else class="flex items-start gap-2 p-2.5 pr-2">
           <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-neutral-800 truncate leading-snug">
+            <p class="theme-text-primary truncate text-sm font-medium leading-snug">
               {{ session.title || $t('history.new_chat') }}
             </p>
-            <p v-if="session.preview" class="text-xs text-neutral-400 truncate mt-0.5 leading-relaxed">
+            <p v-if="session.preview" class="theme-text-muted mt-0.5 truncate text-xs leading-relaxed">
               {{ session.preview }}
             </p>
-            <p class="text-[10px] text-neutral-300 mt-1">{{ formatDate(session.created_at) }}</p>
+            <p class="theme-text-muted mt-1 text-[10px] opacity-80">{{ formatDate(session.created_at) }}</p>
           </div>
 
           <!-- Action buttons (visible on hover) -->
           <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5" @click.stop>
             <button
               @click="startRename(session)"
-              class="p-1 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 rounded-md transition-colors"
+              class="theme-text-muted rounded-md p-1 transition-colors hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]"
               :title="$t('history.rename')"
             >
               <Pencil :size="12" />
             </button>
             <button
               @click="handleDelete(session.id)"
-              class="p-1 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
+              class="theme-text-muted rounded-md p-1 transition-colors hover:bg-red-500/10 hover:text-red-400"
               :title="$t('history.delete')"
             >
               <Trash2 :size="12" />
@@ -143,8 +144,3 @@ function formatDate(iso: string) {
   </div>
 </template>
 
-<style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 3px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.08); border-radius: 10px; }
-</style>

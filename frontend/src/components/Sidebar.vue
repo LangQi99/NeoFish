@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PlaySquare, Settings, Compass, LayoutGrid, Languages, Bug } from 'lucide-vue-next'
+import { PlaySquare, Settings, Compass, LayoutGrid, Languages, Bug, Moon, SunMedium } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
 import { useDebugMode } from '../composables/useDebugMode'
+import { useThemeMode } from '../composables/useThemeMode'
 
 const { locale } = useI18n()
 const { debugMode, toggleDebug } = useDebugMode()
+const { isDarkMode, toggleTheme } = useThemeMode()
 const emit = defineEmits<{
   (e: 'new-chat'): void
   (e: 'select-chat', id: string): void
 }>()
 
 const historyOpen = ref(false)
-const panelWidth = 'clamp(12rem, 52vw, 17rem)'
+const panelWidth = 'var(--history-panel-width)'
 
 function toggleHistory() {
   historyOpen.value = !historyOpen.value
@@ -34,21 +36,21 @@ function handleSelectChat(id: string) {
 
 <template>
   <aside class="relative z-20 flex h-screen flex-shrink-0">
-    <div class="flex h-full border-r border-neutral-200/60 bg-white/60 backdrop-blur-xl shadow-[0_28px_60px_-42px_rgba(15,23,42,0.4)]">
+    <div class="theme-rail flex h-full border-r backdrop-blur-xl">
       <div class="flex h-full w-16 flex-col items-center py-6">
         <div class="flex flex-col gap-6">
-          <button :title="$t('sidebar.explore')" class="rounded-xl p-2 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-800">
+          <button :title="$t('sidebar.explore')" class="rounded-xl p-2 transition-colors theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]">
             <Compass :size="20" stroke-width="2" />
           </button>
           <button
             :title="$t('sidebar.chat')"
             @click="toggleHistory"
             class="rounded-xl p-2 transition-all duration-300"
-            :class="historyOpen ? 'bg-neutral-900 text-white shadow-md shadow-neutral-900/15' : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-800'"
+            :class="historyOpen ? 'theme-button-strong shadow-md' : 'theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]'"
           >
             <LayoutGrid :size="20" stroke-width="2" />
           </button>
-          <button :title="$t('sidebar.gallery')" class="rounded-xl p-2 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-800">
+          <button :title="$t('sidebar.gallery')" class="rounded-xl p-2 transition-colors theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]">
             <PlaySquare :size="20" stroke-width="2" />
           </button>
         </div>
@@ -56,7 +58,7 @@ function handleSelectChat(id: string) {
         <div class="mt-auto flex flex-col gap-4">
           <button
             @click="toggleLanguage"
-            class="flex flex-col items-center gap-0.5 rounded-xl p-2 text-neutral-400 transition-all hover:bg-neutral-100 hover:text-neutral-800"
+            class="flex flex-col items-center gap-0.5 rounded-xl p-2 transition-all theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]"
             title="Switch Language / 切换语言"
           >
             <Languages :size="20" stroke-width="2" />
@@ -64,27 +66,37 @@ function handleSelectChat(id: string) {
           </button>
 
           <button
+            @click="toggleTheme"
+            class="rounded-xl p-2 transition-all"
+            :class="isDarkMode ? 'bg-sky-500/15 text-sky-300' : 'bg-neutral-900/5 text-neutral-500 hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]'"
+            :title="isDarkMode ? $t('sidebar.theme_light') : $t('sidebar.theme_dark')"
+          >
+            <SunMedium v-if="isDarkMode" :size="20" stroke-width="2" />
+            <Moon v-else :size="20" stroke-width="2" />
+          </button>
+
+          <button
             @click="toggleDebug"
             class="rounded-xl p-2 transition-all"
-            :class="debugMode ? 'bg-amber-50 text-amber-600' : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-800'"
+            :class="debugMode ? 'bg-amber-500/15 text-amber-400' : 'theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]'"
             :title="debugMode ? $t('sidebar.debug_on') : $t('sidebar.debug_off')"
           >
             <Bug :size="20" stroke-width="2" />
           </button>
 
-          <button :title="$t('sidebar.settings')" class="rounded-xl p-2 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-800">
+          <button :title="$t('sidebar.settings')" class="rounded-xl p-2 transition-colors theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]">
             <Settings :size="20" stroke-width="2" />
           </button>
         </div>
       </div>
 
       <div
-        class="relative h-full overflow-hidden transition-[width,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-        :class="historyOpen ? 'opacity-100' : 'opacity-0'"
+        class="history-panel-shell h-full overflow-hidden transition-[width,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        :class="historyOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'"
         :style="{ width: historyOpen ? panelWidth : '0px' }"
       >
         <div
-          class="flex h-full flex-col border-l border-neutral-200/50 bg-white/88 backdrop-blur-xl shadow-[inset_1px_0_0_rgba(255,255,255,0.75)]"
+          class="theme-panel flex h-full flex-col border-l backdrop-blur-xl"
           :style="{ width: panelWidth }"
         >
           <ChatHistoryPanel

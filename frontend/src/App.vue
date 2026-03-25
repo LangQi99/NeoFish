@@ -8,10 +8,12 @@ import BrowserView from './components/BrowserView.vue'
 import ThinkingChain from './components/ThinkingChain.vue'
 import { useChatHistory } from './composables/useChatHistory'
 import { useDebugMode } from './composables/useDebugMode'
+import { useThemeMode } from './composables/useThemeMode'
 
 const { t } = useI18n()
 const { sessions, activeChatId, loadSessions, createNewChat, refreshSession } = useChatHistory()
 const { debugMode } = useDebugMode()
+useThemeMode()
 
 // ─── WebSocket ─────────────────────────────────────────────────────────────
 const ws = ref<WebSocket | null>(null)
@@ -409,7 +411,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-screen w-full flex overflow-hidden bg-[#FDFBF7] font-sans selection:bg-neutral-200">
+  <div class="theme-app h-screen w-full flex overflow-hidden font-sans">
     <Sidebar
       @new-chat="handleNewChat"
       @select-chat="switchToSession"
@@ -419,14 +421,14 @@ onUnmounted(() => {
       <!-- Top nav indicator -->
       <header class="absolute top-0 left-0 w-full p-6 flex justify-end gap-3 z-10 pointer-events-none">
         <!-- Agent status indicator + proactive takeover button -->
-        <div class="flex items-center gap-2 bg-white/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-neutral-200/50 shadow-sm pointer-events-auto">
+        <div class="theme-badge pointer-events-auto flex items-center gap-2 rounded-full px-3 py-1.5 backdrop-blur-md">
           <div class="w-2 h-2 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-red-500'"></div>
-          <span class="text-xs font-medium text-neutral-600">{{ isConnected ? $t('common.agent_ready') : $t('common.connecting') }}</span>
+          <span class="theme-text-secondary text-xs font-medium">{{ isConnected ? $t('common.agent_ready') : $t('common.connecting') }}</span>
           <!-- Proactive takeover button (only shown during an active chat when not already in takeover) -->
           <button
             v-if="hasStarted && isConnected && !isInTakeover"
             @click="requestTakeover"
-            class="ml-1 text-xs font-semibold text-neutral-500 hover:text-neutral-800 bg-neutral-100 hover:bg-neutral-200 px-2 py-0.5 rounded-full transition-colors"
+            class="theme-button-soft ml-1 rounded-full px-2 py-0.5 text-xs font-semibold transition-colors"
             :title="$t('common.proactive_takeover')"
           >{{ $t('common.proactive_takeover') }}</button>
         </div>
@@ -438,10 +440,10 @@ onUnmounted(() => {
 
       <div v-else class="flex-1 flex flex-col max-w-4xl mx-auto w-full pt-20 pb-6 px-4 min-h-0">
         <!-- Chat history stream -->
-        <div ref="scrollContainer" class="flex-1 overflow-y-auto space-y-6 pb-20 custom-scrollbar pr-4">
+        <div ref="scrollContainer" class="theme-scrollbar flex-1 overflow-y-auto space-y-6 pb-20 pr-4">
           <div v-for="(msg, idx) in processedMessages" :key="idx" 
                class="max-w-[85%] animate-fade-in-up"
-               :class="msg.type === 'user' ? 'bg-neutral-100 text-neutral-800 ml-auto rounded-tr-sm p-4 rounded-2xl' : (msg.type === 'thinking_chain' ? 'mr-auto w-full' : 'bg-white border border-neutral-100 shadow-sm mr-auto rounded-tl-sm p-4 rounded-2xl')">
+               :class="msg.type === 'user' ? 'theme-card-soft theme-text-primary ml-auto rounded-tr-sm p-4 rounded-2xl' : (msg.type === 'thinking_chain' ? 'mr-auto w-full' : 'theme-card mr-auto rounded-tl-sm p-4 rounded-2xl')">
             
             <!-- Thinking Chain -->
             <ThinkingChain 
@@ -475,67 +477,67 @@ onUnmounted(() => {
             
             <!-- Info message (AI response) -->
             <div v-else-if="msg.type === 'info'" class="flex gap-3">
-              <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
-                <span class="text-white text-[10px] font-bold">AI</span>
+              <div class="theme-button-strong flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full">
+                <span class="text-[10px] font-bold">AI</span>
               </div>
               <div 
-                class="text-[15px] leading-relaxed text-neutral-700 font-serif prose prose-sm prose-neutral max-w-none"
+                class="theme-prose text-[15px] leading-relaxed font-serif prose prose-sm max-w-none"
                 v-html="renderMarkdown(msg.message_key ? $t(msg.message_key, msg.params || {}) : msg.message || '')"
               ></div>
             </div>
 
             <!-- Takeover started notification -->
-            <div v-else-if="msg.type === 'takeover_started'" class="flex flex-col gap-3 w-full p-4 bg-white border border-neutral-100 shadow-sm rounded-2xl rounded-tl-sm">
+            <div v-else-if="msg.type === 'takeover_started'" class="theme-card flex w-full flex-col gap-3 rounded-2xl rounded-tl-sm p-4">
               <div class="flex gap-3">
                 <div class="w-6 h-6 rounded-full bg-amber-500 flex-shrink-0 flex items-center justify-center shadow-sm">
                   <span class="text-white text-[11px] font-bold">↗</span>
                 </div>
-                <div class="text-[15px] leading-relaxed text-amber-800 font-medium pt-0.5">
+                <div class="pt-0.5 text-[15px] font-medium leading-relaxed text-amber-500">
                   {{ $t('common.takeover_started') }}
                 </div>
               </div>
             </div>
 
             <!-- Takeover ended notification -->
-            <div v-else-if="msg.type === 'takeover_ended'" class="flex flex-col gap-3 w-full p-4 bg-white border border-neutral-100 shadow-sm rounded-2xl rounded-tl-sm">
+            <div v-else-if="msg.type === 'takeover_ended'" class="theme-card flex w-full flex-col gap-3 rounded-2xl rounded-tl-sm p-4">
               <div class="flex gap-3">
                 <div class="w-6 h-6 rounded-full bg-green-600 flex-shrink-0 flex items-center justify-center shadow-sm">
                   <span class="text-white text-[11px] font-bold">✓</span>
                 </div>
-                <div class="text-[15px] leading-relaxed text-neutral-700 font-medium pt-0.5">
+                <div class="theme-text-secondary pt-0.5 text-[15px] font-medium leading-relaxed">
                   {{ msg.message_key ? $t(msg.message_key, msg.params || {}) : msg.message }}
                 </div>
               </div>
-              <div v-if="msg.image" class="mt-1 rounded-xl overflow-hidden border border-neutral-200/60 shadow-sm bg-neutral-50/50 p-2">
+              <div v-if="msg.image" class="mt-1 overflow-hidden rounded-xl border p-2" style="border-color: var(--border-muted); background: var(--surface-soft); box-shadow: var(--shadow-card);">
                 <img :src="'data:image/jpeg;base64,' + msg.image" class="w-full h-auto object-contain max-h-[400px] rounded-lg" alt="Final page state" />
               </div>
             </div>
 
             <!-- Image message -->
-            <div v-else-if="msg.type === 'image'" class="flex flex-col gap-3 w-full p-4 bg-white border border-neutral-100 shadow-sm rounded-2xl rounded-tl-sm">
+            <div v-else-if="msg.type === 'image'" class="theme-card flex w-full flex-col gap-3 rounded-2xl rounded-tl-sm p-4">
               <div class="flex gap-3">
-                <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
-                  <span class="text-white text-[10px] font-bold">AI</span>
+                <div class="theme-button-strong flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full">
+                  <span class="text-[10px] font-bold">AI</span>
                 </div>
-                <div class="text-[15px] leading-relaxed text-neutral-700 font-serif">{{ msg.description }}</div>
+                <div class="theme-text-secondary font-serif text-[15px] leading-relaxed">{{ msg.description }}</div>
               </div>
-              <div class="mt-1 rounded-xl overflow-hidden border border-neutral-200/60 shadow-sm bg-neutral-50/50 p-2">
+              <div class="mt-1 overflow-hidden rounded-xl border p-2" style="border-color: var(--border-muted); background: var(--surface-soft); box-shadow: var(--shadow-card);">
                 <img :src="'data:image/jpeg;base64,' + msg.image" class="w-full h-auto object-contain max-h-[400px] rounded-lg" alt="Screenshot" />
               </div>
             </div>
 
             <!-- File message -->
-            <div v-else-if="msg.type === 'file'" class="flex flex-col gap-3 w-full p-4 bg-white border border-neutral-100 shadow-sm rounded-2xl rounded-tl-sm">
+            <div v-else-if="msg.type === 'file'" class="theme-card flex w-full flex-col gap-3 rounded-2xl rounded-tl-sm p-4">
               <div class="flex gap-3">
-                <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
-                  <span class="text-white text-[10px] font-bold">AI</span>
+                <div class="theme-button-strong flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full">
+                  <span class="text-[10px] font-bold">AI</span>
                 </div>
-                <div class="text-[15px] leading-relaxed text-neutral-700 font-serif">{{ msg.description || $t('common.file_sent') }}</div>
+                <div class="theme-text-secondary font-serif text-[15px] leading-relaxed">{{ msg.description || $t('common.file_sent') }}</div>
               </div>
               <a
                 :href="'data:' + msg.mime_type + ';base64,' + msg.data"
                 :download="msg.filename"
-                class="inline-flex items-center gap-3 px-4 py-3 bg-neutral-50 hover:bg-neutral-100 rounded-xl border border-neutral-200/60 shadow-sm transition-colors max-w-xs"
+                class="theme-button-soft inline-flex max-w-xs items-center gap-3 rounded-xl px-4 py-3 transition-colors"
               >
                 <div class="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -543,23 +545,23 @@ onUnmounted(() => {
                   </svg>
                 </div>
                 <div class="flex flex-col overflow-hidden">
-                  <span class="text-sm font-medium text-neutral-800 truncate">{{ msg.filename }}</span>
-                  <span class="text-xs text-neutral-500">{{ $t('common.click_to_download') }}</span>
+                  <span class="theme-text-primary truncate text-sm font-medium">{{ msg.filename }}</span>
+                  <span class="theme-text-muted text-xs">{{ $t('common.click_to_download') }}</span>
                 </div>
               </a>
             </div>
 
             <!-- Action required -->
-            <div v-else-if="msg.type === 'action_required'" class="flex flex-col gap-4 w-full p-4 bg-white border border-neutral-100 shadow-sm rounded-2xl rounded-tl-sm">
+            <div v-else-if="msg.type === 'action_required'" class="theme-card flex w-full flex-col gap-4 rounded-2xl rounded-tl-sm p-4">
               <div class="flex gap-3">
                 <div class="w-6 h-6 rounded-full bg-orange-500 flex-shrink-0 flex items-center justify-center shadow-sm">
                   <span class="text-white text-[12px] font-bold">!</span>
                 </div>
-                <div class="text-[15px] leading-relaxed text-neutral-800 font-medium pt-0.5">
+                <div class="theme-text-primary pt-0.5 text-[15px] font-medium leading-relaxed">
                   {{ $t('common.action_required') }}：{{ msg.reason }}
                 </div>
               </div>
-              <div v-if="msg.image" class="mt-2 rounded-xl overflow-hidden border border-neutral-200/60 shadow-sm bg-neutral-50/50 p-2">
+              <div v-if="msg.image" class="mt-2 overflow-hidden rounded-xl border p-2" style="border-color: var(--border-muted); background: var(--surface-soft); box-shadow: var(--shadow-card);">
                 <img :src="'data:image/jpeg;base64,' + msg.image" class="w-full h-auto object-contain max-h-[400px] rounded-lg" alt="Action Required" />
               </div>
               <div class="flex flex-wrap gap-3 mt-1">
@@ -578,7 +580,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Sticky bottom input -->
-        <div class="sticky bottom-0 pt-4 bg-gradient-to-t from-[#FDFBF7] pb-4 backdrop-blur-sm">
+        <div class="theme-gradient-bottom sticky bottom-0 pb-4 pt-4 backdrop-blur-sm">
           <MainInput :minimal="true" @submit="handleUserSubmit" class="!my-0 !h-auto" />
         </div>
       </div>
@@ -620,14 +622,4 @@ onUnmounted(() => {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.1);
-  border-radius: 10px;
-}
 </style>

@@ -131,13 +131,13 @@ function navigate() {
 
 <template>
   <!-- Full-screen modal overlay -->
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm" style="background: var(--surface-overlay);">
     <div
-      class="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+      class="theme-card flex flex-col overflow-hidden rounded-2xl"
       style="width: min(1300px, calc(100vw - 2rem)); height: min(900px, calc(100vh - 2rem));"
     >
       <!-- Toolbar -->
-      <div class="flex items-center gap-2 px-4 py-2.5 border-b border-neutral-200 bg-neutral-50 flex-shrink-0">
+      <div class="flex flex-shrink-0 items-center gap-2 border-b px-4 py-2.5" style="border-color: var(--border-muted); background: var(--surface-browser-muted);">
         <!-- Traffic-light dots -->
         <div class="flex items-center gap-1.5 mr-1">
           <div class="w-3 h-3 rounded-full bg-red-400"></div>
@@ -151,7 +151,8 @@ function navigate() {
           @keydown.enter.stop="navigate"
           @keydown.stop
           type="text"
-          class="flex-1 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-sm font-mono outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200 transition-all"
+          class="theme-text-primary flex-1 rounded-lg border px-3 py-1.5 font-mono text-sm outline-none transition-all focus:ring-1 focus:ring-blue-200"
+          style="border-color: var(--border-muted); background: var(--surface-browser);"
           :placeholder="$t('browser.url_placeholder')"
           spellcheck="false"
         />
@@ -159,7 +160,7 @@ function navigate() {
         <!-- Reload / navigate button -->
         <button
           @click="navigate"
-          class="p-1.5 rounded-lg hover:bg-neutral-200 text-neutral-500 transition-colors"
+          class="theme-text-muted rounded-lg p-1.5 transition-colors hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]"
           :title="$t('browser.navigate')"
         >
           <RotateCw :size="15" />
@@ -168,7 +169,7 @@ function navigate() {
         <!-- Done button -->
         <button
           @click="$emit('done')"
-          class="px-4 py-1.5 bg-neutral-900 text-white rounded-lg text-sm font-medium hover:bg-neutral-700 transition-colors"
+          class="theme-button-strong rounded-lg px-4 py-1.5 text-sm font-medium transition-colors"
         >
           {{ $t('common.takeover_done_button') }}
         </button>
@@ -177,7 +178,8 @@ function navigate() {
       <!-- Browser viewport area -->
       <div
         ref="browserContainer"
-        class="flex-1 relative bg-neutral-200 overflow-hidden cursor-crosshair focus:outline-none select-none"
+        class="relative flex-1 cursor-crosshair overflow-hidden select-none focus:outline-none"
+        style="background: var(--surface-browser-muted);"
         tabindex="0"
         @click.prevent="onClick"
         @dblclick.prevent="onDblClick"
@@ -194,7 +196,7 @@ function navigate() {
           alt="browser view"
         />
         <!-- Loading state -->
-        <div v-else class="flex items-center justify-center h-full text-neutral-400 gap-2">
+        <div v-else class="theme-text-muted flex h-full items-center justify-center gap-2">
           <svg class="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>

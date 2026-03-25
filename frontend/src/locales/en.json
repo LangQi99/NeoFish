@@ -39,6 +39,8 @@
     "chat": "Chat History",
     "gallery": "Gallery",
     "settings": "Settings",
+    "theme_dark": "Switch to dark mode",
+    "theme_light": "Switch to light mode",
     "debug_on": "Debug Mode: On",
     "debug_off": "Debug Mode: Off"
   },

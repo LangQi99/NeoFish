@@ -39,25 +39,25 @@ function toggle() {
 </script>
 
 <template>
-  <div class="thinking-chain bg-neutral-50 border border-neutral-200/60 rounded-xl overflow-hidden">
+  <div class="theme-card-soft thinking-chain overflow-hidden rounded-xl">
     <button
       @click="toggle"
-      class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-100/50 transition-colors"
+      class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-muted)]"
     >
-      <div class="w-6 h-6 rounded-full bg-neutral-900 flex-shrink-0 flex items-center justify-center">
-        <Brain :size="14" class="text-white" />
+      <div class="theme-button-strong flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full">
+        <Brain :size="14" />
       </div>
       
-      <span class="flex-1 text-sm text-neutral-600 truncate">
+      <span class="theme-text-secondary flex-1 truncate text-sm">
         {{ summaryText }}
       </span>
       
-      <span v-if="!isActive" class="text-xs text-neutral-400 mr-2">
+      <span v-if="!isActive" class="theme-text-muted mr-2 text-xs">
         {{ completedCount }} {{ $t('thinking.steps') }}
       </span>
       
-      <ChevronRight v-if="!expanded" :size="16" class="text-neutral-400" />
-      <ChevronDown v-else :size="16" class="text-neutral-400" />
+      <ChevronRight v-if="!expanded" :size="16" class="theme-text-muted" />
+      <ChevronDown v-else :size="16" class="theme-text-muted" />
     </button>
     
     <Transition
@@ -66,16 +66,16 @@ function toggle() {
       enter-from-class="opacity-0 max-h-0"
       leave-to-class="opacity-0 max-h-0"
     >
-      <div v-if="expanded" class="border-t border-neutral-200/60 overflow-hidden" style="max-height: 400px;">
+      <div v-if="expanded" class="overflow-hidden border-t" style="max-height: 400px; border-color: var(--border-muted);">
         <div class="px-4 py-3 space-y-2">
           <div
             v-for="(step, idx) in steps"
             :key="idx"
             class="flex items-center gap-2 text-sm"
-            :class="step.completed ? 'text-neutral-500' : 'text-neutral-800'"
+            :class="step.completed ? 'theme-text-muted' : 'theme-text-primary'"
           >
             <span v-if="step.completed" class="text-green-500">✓</span>
-            <span v-else class="text-neutral-400">○</span>
+            <span v-else class="theme-text-muted">○</span>
             <span>{{ step.content }}</span>
           </div>
         </div>

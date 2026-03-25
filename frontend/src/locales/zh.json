@@ -39,6 +39,8 @@
     "chat": "对话历史",
     "gallery": "图库",
     "settings": "设置",
+    "theme_dark": "切换夜间模式",
+    "theme_light": "切换白天模式",
     "debug_on": "调试模式：已开启",
     "debug_off": "调试模式：已关闭"
   },
