@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import json
@@ -16,6 +17,7 @@ import os
 from playwright_manager import PlaywrightManager
 from agent import run_agent_loop
 from platforms.web import WebAdapter
+from agent_task_manager import task_manager
 
 pm = PlaywrightManager()
 
@@ -28,6 +30,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 SESSIONS_FILE = Path("sessions.json")
 
+
 def _load_sessions() -> dict:
     if SESSIONS_FILE.exists():
         try:
@@ -36,13 +39,15 @@ def _load_sessions() -> dict:
             pass
     return {}
 
+
 def _save_sessions():
     SESSIONS_FILE.write_text(
-        json.dumps(sessions, ensure_ascii=False, indent=2),
-        encoding="utf-8"
+        json.dumps(sessions, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-sessions: dict = _load_sessions()   # {session_id: {title, created_at, messages: [...]}}
+
+sessions: dict = _load_sessions()  # {session_id: {title, created_at, messages: [...]}}
+
 
 def _new_session(title: str = "") -> dict:
     sid = str(uuid.uuid4())
@@ -50,10 +55,11 @@ def _new_session(title: str = "") -> dict:
         "id": sid,
         "title": title,
         "created_at": datetime.now().isoformat(),
-        "messages": []
+        "messages": [],
     }
     _save_sessions()
     return sessions[sid]
+
 
 def _session_preview(s: dict) -> dict:
     msgs = s.get("messages", [])
@@ -66,7 +72,9 @@ def _session_preview(s: dict) -> dict:
         "message_count": len(msgs),
     }
 
+
 # ─── Lifespan ─────────────────────────────────────────────────────────────────
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -75,6 +83,7 @@ async def lifespan(app: FastAPI):
     yield
     print("Stopping Playwright Manager...")
     await pm.stop()
+
 
 app = FastAPI(title="NeoFish Agent API", lifespan=lifespan)
 
@@ -87,6 +96,7 @@ app.add_middleware(
 )
 
 # ─── REST Endpoints ───────────────────────────────────────────────────────────
+
 
 @app.get("/")
 def read_root():
@@ -110,6 +120,7 @@ def create_chat():
 
 class PatchChat(BaseModel):
     title: str
+
 
 @app.patch("/chats/{session_id}")
 def rename_chat(session_id: str, body: PatchChat):
@@ -136,7 +147,27 @@ def get_messages(session_id: str):
     return sessions[session_id]["messages"]
 
 
+@app.get("/chats/{session_id}/task_status")
+def get_task_status(session_id: str):
+    status = task_manager.get_task_status(session_id)
+    if status:
+        return {"session_id": session_id, "status": status.value}
+    return {"session_id": session_id, "status": None}
+
+
+@app.post("/chats/{session_id}/stop_task")
+async def stop_task(session_id: str):
+    success = await task_manager.stop_task(session_id)
+    return {"session_id": session_id, "stopped": success}
+
+
+@app.get("/tasks/stats")
+def get_task_stats():
+    return task_manager.get_stats()
+
+
 # ─── WebSocket ────────────────────────────────────────────────────────────────
+
 
 @app.websocket("/ws/agent")
 async def websocket_endpoint(websocket: WebSocket):
@@ -165,11 +196,14 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             await adapter.handle_message(data)
     except WebSocketDisconnect:
-        print(f"WebSocket client disconnected (session: {session_id})")
+        print(
+            f"WebSocket client disconnected (session: {session_id}), task continues in background"
+        )
     except Exception as e:
         print(f"WebSocket error: {e}")
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

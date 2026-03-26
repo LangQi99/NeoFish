@@ -18,9 +18,8 @@ useThemeMode()
 // ─── WebSocket ─────────────────────────────────────────────────────────────
 const ws = ref<WebSocket | null>(null)
 const isConnected = ref(false)
-// Tracks whether a browser-takeover is currently active
 const isInTakeover = ref(false)
-// Embedded browser state
+const isTaskRunning = ref(false)
 const browserFrame = ref('')
 const browserUrl = ref('')
 const browserViewport = ref({ width: 1280, height: 800 })
@@ -40,24 +39,31 @@ function connectWs(sessionId: string) {
 
   socket.onmessage = (event) => {
     const data = JSON.parse(event.data)
-    // If server echoes back a session_id (on connection), sync it
     if (data.session_id && data.session_id !== activeChatId.value) {
       activeChatId.value = data.session_id
     }
-    // Handle takeover lifecycle messages
+    if (data.type === 'task_status') {
+      isTaskRunning.value = data.status === 'running'
+      return
+    }
     if (data.type === 'takeover_started') {
       isInTakeover.value = true
       browserFrame.value = data.image || ''
       browserUrl.value = data.url || ''
       browserViewport.value = data.viewport || { width: 1280, height: 800 }
     } else if (data.type === 'takeover_frame') {
-      // Live screenshot frame — update the embedded browser view only
       browserFrame.value = data.image || ''
       browserUrl.value = data.url || browserUrl.value
-      return  // don't push frames into the chat history
+      return
     } else if (data.type === 'takeover_ended') {
       isInTakeover.value = false
       browserFrame.value = ''
+    }
+    if (data.message_key === 'common.agent_starting') {
+      isTaskRunning.value = true
+    }
+    if (data.message_key === 'common.task_completed' || data.message_key === 'common.task_cancelled' || data.message_key === 'common.task_stopped') {
+      isTaskRunning.value = false
     }
     pushMessage(data)
   }
@@ -351,6 +357,13 @@ function resumeAgent() {
   }
 }
 
+function stopTask() {
+  if (ws.value && isConnected.value) {
+    ws.value.send(JSON.stringify({ type: 'stop_task' }))
+    isTaskRunning.value = false
+  }
+}
+
 /** Request an embedded browser takeover. */
 function requestTakeover() {
   if (ws.value && isConnected.value) {
@@ -425,6 +438,11 @@ onUnmounted(() => {
           <div class="w-2 h-2 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-red-500'"></div>
           <span class="theme-text-secondary text-xs font-medium">{{ isConnected ? $t('common.agent_ready') : $t('common.connecting') }}</span>
           <!-- Proactive takeover button (only shown during an active chat when not already in takeover) -->
+          <button
+            v-if="isTaskRunning"
+            @click="stopTask"
+            class="ml-1 text-xs font-semibold text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2 py-0.5 rounded-full transition-colors"
+          >{{ $t('common.stop_task') }}</button>
           <button
             v-if="hasStarted && isConnected && !isInTakeover"
             @click="requestTakeover"

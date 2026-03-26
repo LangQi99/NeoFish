@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Optional, Callable, Awaitable
 from playwright.async_api import async_playwright, BrowserContext, Page, Locator
 
-# Directory to store browser state (cookies, localStorage, etc.)
+from tab_manager import TabManager, DEFAULT_MAX_TABS, DEFAULT_TAB_TTL
+
 BROWSER_STATE_DIR = Path("browser_state")
 
 _DEFAULT_USER_AGENT = (
@@ -13,42 +14,63 @@ _DEFAULT_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-# ARIA roles that represent interactive / focusable elements.
 _INTERACTIVE_ROLES = {
-    "button", "link", "textbox", "checkbox", "radio", "combobox",
-    "listbox", "menuitem", "menuitemcheckbox", "menuitemradio",
-    "option", "searchbox", "switch", "tab", "treeitem",
-    "slider", "spinbutton", "gridcell",
+    "button",
+    "link",
+    "textbox",
+    "checkbox",
+    "radio",
+    "combobox",
+    "listbox",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "option",
+    "searchbox",
+    "switch",
+    "tab",
+    "treeitem",
+    "slider",
+    "spinbutton",
+    "gridcell",
 }
 
 
 class PlaywrightManager:
-    def __init__(self):
+    def __init__(
+        self,
+        max_tabs: int = DEFAULT_MAX_TABS,
+        tab_ttl: int = DEFAULT_TAB_TTL,
+    ):
         self.playwright = None
         self.context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
-        # This event flags if the agent is blocked awaiting human interaction
+        self.tab_manager: Optional[TabManager] = None
+        self.max_tabs = max_tabs
+        self.tab_ttl = tab_ttl
+
+        self._current_session_id: Optional[str] = None
         self.human_intervention_event: asyncio.Event = asyncio.Event()
-        # Takeover state
+
         self._in_takeover: bool = False
+        self._takeover_session_id: Optional[str] = None
         self._takeover_event: Optional[asyncio.Event] = None
         self._takeover_final_url: str = "about:blank"
-        # Flag set by a proactive takeover request so the agent loop pauses
         self._pause_requested: bool = False
-        # Ref map: maps ref IDs (e.g. "e1") to (role, name) tuples
         self._ref_map: dict[str, tuple[str, str]] = {}
-        # Embedded-browser streaming state
+
         self._stream_running: bool = False
         self._stream_task: Optional[asyncio.Task] = None
         self._stream_callback: Optional[Callable] = None
-        # Browser viewport dimensions sent to the frontend for coordinate mapping
         self.viewport_width: int = 1280
         self.viewport_height: int = 800
 
-    # ── Internal helpers ───────────────────────────────────────────────────────
+    @property
+    def page(self) -> Optional[Page]:
+        if self.tab_manager and self._current_session_id:
+            return self.tab_manager.get_active_page(self._current_session_id)
+        return None
 
     async def _launch_context(self, headless: bool) -> None:
-        """Launch (or relaunch) the Chromium persistent context."""
         BROWSER_STATE_DIR.mkdir(exist_ok=True)
         self.context = await self.playwright.chromium.launch_persistent_context(
             user_data_dir=str(BROWSER_STATE_DIR),
@@ -56,23 +78,21 @@ class PlaywrightManager:
             viewport={"width": 1280, "height": 800},
             user_agent=_DEFAULT_USER_AGENT,
         )
-        if self.context.pages:
-            self.page = self.context.pages[0]
-        else:
-            self.page = await self.context.new_page()
-
-    # ── Lifecycle ──────────────────────────────────────────────────────────────
+        self.tab_manager = TabManager(
+            context=self.context,
+            max_tabs=self.max_tabs,
+            tab_ttl=self.tab_ttl,
+        )
+        await self.tab_manager.start()
 
     async def start(self):
         self.playwright = await async_playwright().start()
         await self._launch_context(headless=True)
 
     async def stop(self):
-        try:
-            if self.page:
-                await self.page.close()
-        except Exception:
-            pass
+        if self.tab_manager:
+            await self.tab_manager.stop()
+            self.tab_manager = None
         try:
             if self.context:
                 await self.context.close()
@@ -81,36 +101,41 @@ class PlaywrightManager:
         if self.playwright:
             await self.playwright.stop()
 
-    # ── Utilities ──────────────────────────────────────────────────────────────
+    def set_current_session(self, session_id: str):
+        self._current_session_id = session_id
+        if self.tab_manager:
+            self.tab_manager.activate_tab(session_id)
 
-    async def get_page_screenshot_base64(self) -> str:
-        if not self.page:
+    async def get_or_create_page(self, session_id: str) -> Page:
+        self.set_current_session(session_id)
+        if self.tab_manager:
+            return await self.tab_manager.get_or_create_tab(session_id)
+        raise RuntimeError("TabManager not initialized")
+
+    async def close_tab(self, session_id: str):
+        if self.tab_manager:
+            await self.tab_manager.close_tab(session_id)
+
+    def deactivate_tab(self, session_id: str):
+        if self.tab_manager:
+            self.tab_manager.deactivate_tab(session_id)
+
+    async def get_page_screenshot_base64(self, session_id: Optional[str] = None) -> str:
+        page = self._get_page(session_id)
+        if not page:
             return ""
         try:
-            screenshot_bytes = await self.page.screenshot(type="jpeg", quality=60)
+            screenshot_bytes = await page.screenshot(type="jpeg", quality=60)
             return base64.b64encode(screenshot_bytes).decode("utf-8")
         except Exception:
             return ""
 
-    async def get_aria_snapshot(self) -> str:
-        """
-        Return an annotated ARIA snapshot of the current page.
-
-        Interactive elements (buttons, links, textboxes, etc.) are assigned
-        sequential ref IDs such as ``[ref=e1]``, ``[ref=e2]``, …  The AI can
-        pass these refs to ``click`` / ``type_text`` instead of guessing CSS
-        selectors.
-
-        Example output:
-            - document "My Page":
-              - button "提交" [ref=e1]
-              - textbox "用户名" [ref=e2]
-              - link "忘记密码" [ref=e3]
-        """
-        if not self.page:
+    async def get_aria_snapshot(self, session_id: Optional[str] = None) -> str:
+        page = self._get_page(session_id)
+        if not page:
             return ""
         try:
-            raw_yaml = await self.page.locator("body").aria_snapshot()
+            raw_yaml = await page.locator("body").aria_snapshot()
         except Exception:
             return ""
 
@@ -119,15 +144,12 @@ class PlaywrightManager:
         annotated_lines: list[str] = []
 
         for line in raw_yaml.splitlines():
-            # Match lines like: "  - button "Submit"" or "  - button "Submit" [level=1]"
-            # The role token is the first word after "- "
             m = re.match(r'^(\s*- )(\w+)((?:\s+"[^"]*")?)(.*)?$', line)
             if m:
                 indent_dash, role, quoted_name, rest = m.groups()
                 if role in _INTERACTIVE_ROLES:
                     counter += 1
                     ref = f"e{counter}"
-                    # Extract the actual name string (without quotes)
                     name = quoted_name.strip(' "') if quoted_name else ""
                     self._ref_map[ref] = (role, name)
                     annotated_lines.append(
@@ -138,47 +160,49 @@ class PlaywrightManager:
 
         return "\n".join(annotated_lines)
 
-    async def locate_by_ref(self, ref: str) -> Locator:
-        """
-        Return a Playwright ``Locator`` for the element identified by *ref*.
-
-        Raises ``ValueError`` if the ref is not present in the last snapshot.
-        """
+    async def locate_by_ref(
+        self, ref: str, session_id: Optional[str] = None
+    ) -> Locator:
         if ref not in self._ref_map:
             raise ValueError(
                 f"Unknown ref '{ref}'. Call the snapshot tool first, then use the "
                 "ref IDs shown in the output."
             )
+        page = self._get_page(session_id)
+        if not page:
+            raise RuntimeError("No active page")
         role, name = self._ref_map[ref]
         if name:
-            return self.page.get_by_role(role, name=name)
-        return self.page.get_by_role(role)
+            return page.get_by_role(role, name=name)
+        return page.get_by_role(role)
 
-    async def check_if_login_required(self) -> bool:
-        """
-        Custom logic to detect simple login states. E.g. look for common login text or URL patterns.
-        For Bilibili, it could be checking if "登录" (Login) button is prominent, or if we are redirected to passport.bilibili.com
-        """
-        if not self.page:
+    async def check_if_login_required(self, session_id: Optional[str] = None) -> bool:
+        page = self._get_page(session_id)
+        if not page:
             return False
         try:
-            url = self.page.url
+            url = page.url
             if "passport/login" in url or "login" in url:
                 return True
             return False
         except Exception:
             return False
 
-    # ── Human-in-the-loop (agent-initiated) ───────────────────────────────────
+    def _get_page(self, session_id: Optional[str] = None) -> Optional[Page]:
+        if self._in_takeover and self._takeover_session_id:
+            effective_session = self._takeover_session_id
+        else:
+            effective_session = session_id or self._current_session_id
+
+        if self.tab_manager and effective_session:
+            return self.tab_manager.get_active_page(effective_session)
+        return None
 
     async def block_for_human(
-        self, callback: Callable[[str, str], Awaitable[None]], reason: str = "Login Required"
+        self,
+        callback: Callable[[str, str], Awaitable[None]],
+        reason: str = "Login Required",
     ):
-        """
-        Captures a screenshot, triggers the WebSocket callback to send it to the
-        frontend, and pauses execution until resume_from_human() is called
-        (either via the plain 'Resume' button or after a takeover completes).
-        """
         self.human_intervention_event.clear()
 
         screenshot_b64 = await self.get_page_screenshot_base64()
@@ -189,64 +213,44 @@ class PlaywrightManager:
         print("Human signal received. Agent resuming…")
 
     def resume_from_human(self):
-        """Called when the frontend sends a 'resume' or takeover-complete signal."""
         self.human_intervention_event.set()
 
-    # ── Proactive-pause flag (for the always-visible Takeover button) ──────────
-
     def request_pause(self):
-        """
-        Ask the agent loop to pause at the beginning of its next step.
-        The loop will block on human_intervention_event until resume_from_human()
-        is called (which happens automatically when a takeover completes).
-        """
-        # Clear the event first so the loop will block when it checks
         self.human_intervention_event.clear()
         self._pause_requested = True
 
     def check_and_clear_pause_request(self) -> bool:
-        """
-        Return True (and clear the flag) if a proactive pause was requested.
-        Called once per agent-loop step before the observe phase.
-        """
         if self._pause_requested:
             self._pause_requested = False
             return True
         return False
 
-    # ── Takeover flow ──────────────────────────────────────────────────────────
-
     @property
     def in_takeover(self) -> bool:
         return self._in_takeover
 
-    async def start_takeover(self) -> str:
-        """
-        Close the headless browser and launch a headed (visible) browser at the
-        same URL so the user can interact directly.
+    async def start_takeover(self, session_id: Optional[str] = None) -> str:
+        effective_session = session_id or self._current_session_id
+        if not effective_session:
+            return "about:blank"
 
-        Returns the URL that was open when the takeover started.
-        """
         if self._in_takeover:
             return self._takeover_final_url
 
-        # Remember where the agent was
+        self._takeover_session_id = effective_session
+
         current_url: str = "about:blank"
+        page = self._get_page(effective_session)
         try:
-            if self.page and not self.page.is_closed():
-                current_url = self.page.url
+            if page and not page.is_closed():
+                current_url = page.url
         except Exception:
             pass
 
         self._takeover_final_url = current_url
 
-        # Close the headless context
-        try:
-            if self.page:
-                await self.page.close()
-                self.page = None
-        except Exception:
-            pass
+        if self.tab_manager:
+            await self.tab_manager.close_tab(effective_session, save_url=True)
         try:
             if self.context:
                 await self.context.close()
@@ -257,26 +261,34 @@ class PlaywrightManager:
         self._in_takeover = True
         self._takeover_event = asyncio.Event()
 
-        # Launch headed context
-        await self._launch_context(headless=False)
+        BROWSER_STATE_DIR.mkdir(exist_ok=True)
+        self.context = await self.playwright.chromium.launch_persistent_context(
+            user_data_dir=str(BROWSER_STATE_DIR),
+            headless=False,
+            viewport={"width": 1280, "height": 800},
+            user_agent=_DEFAULT_USER_AGENT,
+        )
 
-        # Navigate to the same page
+        self.tab_manager = TabManager(
+            context=self.context,
+            max_tabs=self.max_tabs,
+            tab_ttl=self.tab_ttl,
+        )
+        await self.tab_manager.start()
+
+        takeover_page = await self.tab_manager.get_or_create_tab(effective_session)
+
         if current_url and current_url != "about:blank":
             try:
-                await self.page.goto(current_url, timeout=15000)
+                await takeover_page.goto(current_url, timeout=15000)
             except Exception as e:
                 print(f"Takeover: could not navigate to {current_url}: {e}")
 
-        # Wire up close detection so we unblock wait_for_takeover_complete()
-        # even when the user closes the browser window manually.
-        # Capture URL in a local variable now so the callbacks don't need to
-        # access self.page after it may have been closed.
         captured_url: list[str] = [current_url]
 
         def _on_page_close():
             try:
-                # page.url is still readable during the close event
-                captured_url[0] = self.page.url
+                captured_url[0] = takeover_page.url
                 self._takeover_final_url = captured_url[0]
             except Exception:
                 pass
@@ -285,28 +297,26 @@ class PlaywrightManager:
             if self._takeover_event and not self._takeover_event.is_set():
                 self._takeover_event.set()
 
-        self.page.on("close", lambda: _on_page_close())
+        takeover_page.on("close", lambda: _on_page_close())
         self.context.on("close", lambda: _on_context_close())
 
         return current_url
 
     async def wait_for_takeover_complete(self) -> tuple[str, str]:
-        """
-        Block until the user closes the headed browser or signal_takeover_done()
-        is called.  Returns (final_url, final_screenshot_b64).
-        """
         if not self._takeover_event:
             return self._takeover_final_url, ""
 
         await self._takeover_event.wait()
 
-        # Try to grab a last screenshot before anything is fully torn down
         final_url = self._takeover_final_url
         final_screenshot = ""
+        page = self._get_page(self._takeover_session_id)
         try:
-            if self.page and not self.page.is_closed():
-                final_url = self.page.url
-                final_screenshot = await self.get_page_screenshot_base64()
+            if page and not page.is_closed():
+                final_url = page.url
+                final_screenshot = await self.get_page_screenshot_base64(
+                    self._takeover_session_id
+                )
                 self._takeover_final_url = final_url
         except Exception:
             pass
@@ -314,29 +324,18 @@ class PlaywrightManager:
         return final_url, final_screenshot
 
     def signal_takeover_done(self):
-        """
-        Called when the frontend sends a 'takeover_done' signal — the user
-        pressed "Done" in the UI without closing the browser window.
-        """
         if self._takeover_event and not self._takeover_event.is_set():
             self._takeover_event.set()
 
     async def end_takeover(self, final_url: str) -> str:
-        """
-        Close the headed browser (if still open) and relaunch headless.
-        Navigates back to *final_url* so the agent can continue from where
-        the user left off.  Returns the final URL.
-        """
+        session_id = self._takeover_session_id
         self._in_takeover = False
         self._takeover_event = None
+        self._takeover_session_id = None
 
-        # Close headed context
-        try:
-            if self.page and not self.page.is_closed():
-                await self.page.close()
-                self.page = None
-        except Exception:
-            pass
+        if self.tab_manager:
+            await self.tab_manager.stop()
+            self.tab_manager = None
         try:
             if self.context:
                 await self.context.close()
@@ -344,43 +343,40 @@ class PlaywrightManager:
         except Exception:
             pass
 
-        # Relaunch headless
         await self._launch_context(headless=True)
+
+        self.set_current_session(session_id)
+        page = await self.get_or_create_page(session_id)
 
         if final_url and final_url != "about:blank":
             try:
-                await self.page.goto(final_url, timeout=15000)
+                await page.goto(final_url, timeout=15000)
                 await asyncio.sleep(1)
             except Exception as e:
                 print(f"end_takeover: could not navigate to {final_url}: {e}")
 
         return final_url
 
-    # ── Embedded browser streaming (takeover v2) ───────────────────────────────
-
     async def start_takeover_stream(
         self,
         frame_callback: Callable,
         stream_interval: float = 0.5,
+        session_id: Optional[str] = None,
     ) -> None:
-        """
-        Start streaming screenshots of the current page to *frame_callback*
-        at *stream_interval* second intervals.  The agent browser remains
-        headless — no window is opened.  The frontend displays these frames
-        and forwards input events back via the handle_takeover_* methods.
-        """
+        self._takeover_session_id = session_id or self._current_session_id
         self._stream_callback = frame_callback
         self._stream_running = True
-        self._stream_task = asyncio.create_task(
-            self._stream_loop(stream_interval)
-        )
+        self._stream_task = asyncio.create_task(self._stream_loop(stream_interval))
 
     async def _stream_loop(self, interval: float) -> None:
         while self._stream_running:
             try:
-                if self.page and not self.page.is_closed():
-                    screenshot = await self.get_page_screenshot_base64()
-                    url = self.page.url
+                page = self._get_page(self._takeover_session_id)
+                if page and not page.is_closed():
+                    screenshot = await self.get_page_screenshot_base64(
+                        self._takeover_session_id
+                    )
+                    url = page.url
                     if screenshot and self._stream_callback:
                         await self._stream_callback(screenshot, url)
             except asyncio.CancelledError:
@@ -390,66 +386,67 @@ class PlaywrightManager:
             await asyncio.sleep(interval)
 
     def stop_takeover_stream(self) -> None:
-        """Stop the screenshot streaming loop."""
         self._stream_running = False
         if self._stream_task and not self._stream_task.done():
             self._stream_task.cancel()
         self._stream_task = None
         self._stream_callback = None
 
-    def begin_embedded_takeover(self) -> asyncio.Event:
-        """
-        Mark the manager as being in a streaming takeover and return the
-        asyncio.Event that will be set when the user signals completion.
-        """
+    def begin_embedded_takeover(
+        self, session_id: Optional[str] = None
+    ) -> asyncio.Event:
+        self._takeover_session_id = session_id or self._current_session_id
         self._in_takeover = True
         self._takeover_event = asyncio.Event()
         return self._takeover_event
 
     def end_embedded_takeover(self) -> None:
-        """Clean up streaming takeover state after the user signals done."""
         self.stop_takeover_stream()
         self._in_takeover = False
         self._takeover_event = None
+        self._takeover_session_id = None
 
     async def handle_takeover_click(
         self, x: float, y: float, button: str = "left"
     ) -> None:
-        """Forward a mouse click to the browser at page coordinates (x, y)."""
-        if self.page and not self.page.is_closed():
-            await self.page.mouse.click(x, y, button=button)
+        page = self._get_page(self._takeover_session_id)
+        if page and not page.is_closed():
+            await page.mouse.click(x, y, button=button)
 
     async def handle_takeover_double_click(self, x: float, y: float) -> None:
-        """Forward a double-click to the browser at page coordinates (x, y)."""
-        if self.page and not self.page.is_closed():
-            await self.page.mouse.dblclick(x, y)
+        page = self._get_page(self._takeover_session_id)
+        if page and not page.is_closed():
+            await page.mouse.dblclick(x, y)
 
     async def handle_takeover_mouse_move(self, x: float, y: float) -> None:
-        """Move the mouse to page coordinates (x, y) in the browser."""
-        if self.page and not self.page.is_closed():
-            await self.page.mouse.move(x, y)
+        page = self._get_page(self._takeover_session_id)
+        if page and not page.is_closed():
+            await page.mouse.move(x, y)
 
     async def handle_takeover_key(self, key: str) -> None:
-        """Press a key in the browser (uses Playwright key names, e.g. 'Enter')."""
-        if self.page and not self.page.is_closed():
-            await self.page.keyboard.press(key)
+        page = self._get_page(self._takeover_session_id)
+        if page and not page.is_closed():
+            await page.keyboard.press(key)
 
     async def handle_takeover_type(self, text: str) -> None:
-        """Type a string of characters into the browser's focused element."""
-        if self.page and not self.page.is_closed():
-            await self.page.keyboard.type(text)
+        page = self._get_page(self._takeover_session_id)
+        if page and not page.is_closed():
+            await page.keyboard.type(text)
 
-    async def handle_takeover_scroll(
-        self, delta_x: float, delta_y: float
-    ) -> None:
-        """Dispatch a wheel event in the browser."""
-        if self.page and not self.page.is_closed():
-            await self.page.mouse.wheel(delta_x, delta_y)
+    async def handle_takeover_scroll(self, delta_x: float, delta_y: float) -> None:
+        page = self._get_page(self._takeover_session_id)
+        if page and not page.is_closed():
+            await page.mouse.wheel(delta_x, delta_y)
 
     async def handle_takeover_navigate(self, url: str) -> None:
-        """Navigate the browser to *url* during a takeover session."""
-        if self.page and not self.page.is_closed():
+        page = self._get_page(self._takeover_session_id)
+        if page and not page.is_closed():
             try:
-                await self.page.goto(url, timeout=15000)
+                await page.goto(url, timeout=15000)
             except Exception as e:
                 print(f"Takeover navigate error: {e}")
+
+    def get_tab_stats(self) -> dict:
+        if self.tab_manager:
+            return self.tab_manager.get_stats()
+        return {"total_tabs": 0, "active_tabs": 0}

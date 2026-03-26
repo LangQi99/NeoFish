@@ -1,13 +1,3 @@
-"""
-platforms/web.py - WebSocket platform adapter for NeoFish.
-
-Handles the existing browser-based frontend over WebSocket.
-The adapter owns a single WebSocket connection; one WebAdapter instance
-is created per WS connection inside the FastAPI route handler.
-
-Supports message queuing when an agent is already running for a session.
-"""
-
 import asyncio
 import base64
 import json
@@ -20,10 +10,10 @@ from fastapi import WebSocket
 
 from message import UnifiedMessage
 from platforms.base import PlatformAdapter
+from agent_task_manager import task_manager
 
 logger = logging.getLogger(__name__)
 
-# Prefixes used to tag assistant messages that carry structured data.
 _ASSISTANT_MSG_PREFIXES = (
     "[Image] ",
     "[Action Required] ",
@@ -31,10 +21,25 @@ _ASSISTANT_MSG_PREFIXES = (
     "[Takeover Ended] ",
 )
 
-# Module-level state for tracking running sessions and message queues
-# Key: session_id, Value: asyncio.Queue of pending messages
+_MIME_TYPES = {
+    "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "zip": "application/zip",
+    "txt": "text/plain",
+    "json": "application/json",
+    "csv": "text/csv",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "mp4": "video/mp4",
+    "mp3": "audio/mpeg",
+}
+
 _web_queues: dict[str, asyncio.Queue] = {}
-# Set of session_ids currently running an agent
 _web_running: set[str] = set()
 
 
@@ -90,7 +95,6 @@ class WebAdapter(PlatformAdapter):
     # ── PlatformAdapter interface ─────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Send the initial "connected" info frame to the client."""
         await self._ws.send_text(
             json.dumps(
                 {
@@ -101,6 +105,21 @@ class WebAdapter(PlatformAdapter):
                 }
             )
         )
+
+        task_status = task_manager.get_task_status(self._session_id)
+        if task_status:
+            await self._ws.send_text(
+                json.dumps(
+                    {
+                        "type": "task_status",
+                        "status": task_status.value,
+                    }
+                )
+            )
+
+        buffered = task_manager.get_buffered_messages(self._session_id)
+        for msg_data in buffered:
+            await self._ws.send_text(json.dumps(msg_data["message"]))
 
     async def stop(self) -> None:
         """No-op: WebSocket lifecycle is managed by FastAPI."""
@@ -140,36 +159,17 @@ class WebAdapter(PlatformAdapter):
         description: str = "",
     ) -> None:
         """Send a file to the web user."""
-        import base64 as _b64
-
         try:
             # Read file and encode to base64
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
 
             filename = file_path.split("/")[-1]
-            b64_data = _b64.b64encode(file_bytes).decode()
+            b64_data = base64.b64encode(file_bytes).decode()
 
             # Determine MIME type
             ext = filename.lower().split(".")[-1] if "." in filename else "bin"
-            mime_types = {
-                "pdf": "application/pdf",
-                "doc": "application/msword",
-                "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "xls": "application/vnd.ms-excel",
-                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "zip": "application/zip",
-                "txt": "text/plain",
-                "json": "application/json",
-                "csv": "text/csv",
-                "jpg": "image/jpeg",
-                "jpeg": "image/jpeg",
-                "png": "image/png",
-                "gif": "image/gif",
-                "mp4": "video/mp4",
-                "mp3": "audio/mpeg",
-            }
-            mime_type = mime_types.get(ext, "application/octet-stream")
+            mime_type = _MIME_TYPES.get(ext, "application/octet-stream")
 
             payload = {
                 "type": "file",
@@ -250,16 +250,13 @@ class WebAdapter(PlatformAdapter):
     # ── Message dispatch ──────────────────────────────────────────────────────
 
     async def handle_message(self, raw: str) -> None:
-        """
-        Dispatch a raw JSON string received from the WebSocket client.
-
-        This is the main entry-point called by the FastAPI route loop.
-        """
         payload = json.loads(raw)
         msg_type = payload.get("type")
 
         if msg_type == "resume":
             await self._handle_resume()
+        elif msg_type == "stop_task":
+            await self._handle_stop_task()
         elif msg_type == "takeover":
             await self._handle_takeover()
         elif msg_type == "takeover_done":
@@ -280,6 +277,29 @@ class WebAdapter(PlatformAdapter):
             await self._handle_takeover_navigate(payload)
         elif msg_type == "user_input":
             await self._handle_user_input(payload)
+
+    async def _handle_stop_task(self) -> None:
+        success = await task_manager.stop_task(self._session_id)
+        if success:
+            await self._ws.send_text(
+                json.dumps(
+                    {
+                        "type": "info",
+                        "message": "Task stopped.",
+                        "message_key": "common.task_stopped",
+                    }
+                )
+            )
+        else:
+            await self._ws.send_text(
+                json.dumps(
+                    {
+                        "type": "info",
+                        "message": "No running task to stop.",
+                        "message_key": "common.no_task_to_stop",
+                    }
+                )
+            )
 
     async def _handle_resume(self) -> None:
         self._pm.resume_from_human()
@@ -355,7 +375,7 @@ class WebAdapter(PlatformAdapter):
                         )
                     )
                 except Exception as e:
-                    print(f"Takeover frame send error: {e}")
+                    logger.warning("Takeover frame send error: %s", e)
 
             await self._pm.start_takeover_stream(send_frame, stream_interval=0.5)
 
@@ -438,8 +458,7 @@ class WebAdapter(PlatformAdapter):
         user_images: list = payload.get("images", [])
         user_files: list = payload.get("files", [])
 
-        # If agent is already running for this session, queue the message
-        if self._session_id in _web_running:
+        if task_manager.has_running_task(self._session_id):
             if self._session_id not in _web_queues:
                 _web_queues[self._session_id] = asyncio.Queue()
             await _web_queues[self._session_id].put(
@@ -449,7 +468,6 @@ class WebAdapter(PlatformAdapter):
                     "files": user_files,
                 }
             )
-            # Inform the user
             await self._ws.send_text(
                 json.dumps(
                     {
@@ -532,12 +550,15 @@ class WebAdapter(PlatformAdapter):
                 human_text = str(msg)
                 packet = {"type": "info", "message": human_text}
                 self._append_message("assistant", human_text)
-            await self._ws.send_text(json.dumps(packet))
 
-        # Mark as running
+            if self._ws.client_state.name == "CONNECTED":
+                await self._ws.send_text(json.dumps(packet))
+            else:
+                task_manager.buffer_message(self._session_id, packet)
+
         _web_running.add(self._session_id)
 
-        async def _run_with_queue():
+        async def _run_with_queue(cancel_event: asyncio.Event = None):
             try:
                 await self._run_agent(
                     self._pm,
@@ -553,8 +574,13 @@ class WebAdapter(PlatformAdapter):
                     uploaded_files=saved_paths,
                     web_queue_getter=lambda: _web_queues.get(self._session_id),
                     web_session_id=self._session_id,
+                    cancel_event=cancel_event,
                 )
             finally:
                 _web_running.discard(self._session_id)
+                _web_queues.pop(self._session_id, None)
 
-        asyncio.create_task(_run_with_queue())
+        await task_manager.start_task(
+            self._session_id,
+            _run_with_queue,
+        )

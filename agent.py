@@ -13,8 +13,7 @@ from background_manager import BackgroundManager
 load_dotenv()
 
 client = AsyncAnthropic(
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
-    base_url=os.getenv("ANTHROPIC_BASE_URL")
+    api_key=os.getenv("ANTHROPIC_API_KEY"), base_url=os.getenv("ANTHROPIC_BASE_URL")
 )
 model_name = os.getenv("MODEL_NAME", "claude-3-7-sonnet-20250219")
 
@@ -96,11 +95,7 @@ TOOLS = [
             "stable ref ID such as [ref=e1]. Use the refs with the `click` and "
             "`type_text` tools instead of fragile CSS/XPath selectors."
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "navigate",
@@ -108,14 +103,14 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {"url": {"type": "string"}},
-            "required": ["url"]
-        }
+            "required": ["url"],
+        },
     },
     {
         "name": "click",
         "description": (
             "Click an element on the page. "
-            "Prefer passing a `ref` obtained from the `snapshot` tool (e.g. ref=\"e1\"). "
+            'Prefer passing a `ref` obtained from the `snapshot` tool (e.g. ref="e1"). '
             "Fall back to a CSS or XPath `selector` only when no ref is available."
         ),
         "input_schema": {
@@ -123,21 +118,21 @@ TOOLS = [
             "properties": {
                 "ref": {
                     "type": "string",
-                    "description": "Ref ID from the snapshot (e.g. \"e1\"). Takes priority over selector."
+                    "description": 'Ref ID from the snapshot (e.g. "e1"). Takes priority over selector.',
                 },
                 "selector": {
                     "type": "string",
-                    "description": "CSS or XPath selector (fallback when ref is not available)."
-                }
+                    "description": "CSS or XPath selector (fallback when ref is not available).",
+                },
             },
-            "required": []
-        }
+            "required": [],
+        },
     },
     {
         "name": "type_text",
         "description": (
             "Type text into an input element. "
-            "Prefer passing a `ref` obtained from the `snapshot` tool (e.g. ref=\"e2\"). "
+            'Prefer passing a `ref` obtained from the `snapshot` tool (e.g. ref="e2"). '
             "Fall back to a CSS or XPath `selector` only when no ref is available."
         ),
         "input_schema": {
@@ -145,16 +140,16 @@ TOOLS = [
             "properties": {
                 "ref": {
                     "type": "string",
-                    "description": "Ref ID from the snapshot (e.g. \"e2\"). Takes priority over selector."
+                    "description": 'Ref ID from the snapshot (e.g. "e2"). Takes priority over selector.',
                 },
                 "selector": {
                     "type": "string",
-                    "description": "CSS or XPath selector (fallback when ref is not available)."
+                    "description": "CSS or XPath selector (fallback when ref is not available).",
                 },
-                "text": {"type": "string"}
+                "text": {"type": "string"},
             },
-            "required": ["text"]
-        }
+            "required": ["text"],
+        },
     },
     {
         "name": "scroll",
@@ -162,8 +157,8 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {"direction": {"type": "string", "enum": ["down", "up"]}},
-            "required": []
-        }
+            "required": [],
+        },
     },
     {
         "name": "extract_info",
@@ -171,35 +166,47 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {"info_summary": {"type": "string"}},
-            "required": ["info_summary"]
-        }
+            "required": ["info_summary"],
+        },
     },
     {
         "name": "request_human_assistance",
         "description": "Pause execution to ask the user to manually solve a login, CAPTCHA, or verification. Use this when you are blocked.",
         "input_schema": {
             "type": "object",
-            "properties": {"reason": {"type": "string", "description": "Why you need human help"}},
-            "required": ["reason"]
-        }
+            "properties": {
+                "reason": {"type": "string", "description": "Why you need human help"}
+            },
+            "required": ["reason"],
+        },
     },
     {
         "name": "send_screenshot",
         "description": "Capture and send the current page screenshot to the user. ONLY use this when: (1) showing final results, (2) User ask you to show something. Do NOT use for routine navigation or intermediate steps. Be selective.",
         "input_schema": {
             "type": "object",
-            "properties": {"description": {"type": "string", "description": "A brief description of what the screenshot shows"}},
-            "required": ["description"]
-        }
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "A brief description of what the screenshot shows",
+                }
+            },
+            "required": ["description"],
+        },
     },
     {
         "name": "finish_task",
         "description": "Call this tool when the final objective is fully accomplished. Pass the final report to the user.",
         "input_schema": {
             "type": "object",
-            "properties": {"report": {"type": "string", "description": "Markdown formatted summary"}},
-            "required": ["report"]
-        }
+            "properties": {
+                "report": {
+                    "type": "string",
+                    "description": "Markdown formatted summary",
+                }
+            },
+            "required": ["report"],
+        },
     },
     # File operation tools
     {
@@ -209,10 +216,13 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to read"},
-                "limit": {"type": "integer", "description": "Maximum number of lines to read (optional)"}
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to read (optional)",
+                },
             },
-            "required": ["path"]
-        }
+            "required": ["path"],
+        },
     },
     {
         "name": "write_file",
@@ -221,10 +231,13 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to write"},
-                "content": {"type": "string", "description": "Content to write to the file"}
+                "content": {
+                    "type": "string",
+                    "description": "Content to write to the file",
+                },
             },
-            "required": ["path", "content"]
-        }
+            "required": ["path", "content"],
+        },
     },
     {
         "name": "edit_file",
@@ -233,11 +246,14 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to edit"},
-                "old_text": {"type": "string", "description": "Text to find and replace"},
-                "new_text": {"type": "string", "description": "Replacement text"}
+                "old_text": {
+                    "type": "string",
+                    "description": "Text to find and replace",
+                },
+                "new_text": {"type": "string", "description": "Replacement text"},
             },
-            "required": ["path", "old_text", "new_text"]
-        }
+            "required": ["path", "old_text", "new_text"],
+        },
     },
     {
         "name": "send_file",
@@ -245,11 +261,17 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File path relative to workspace (e.g. 'output/report.pdf')"},
-                "description": {"type": "string", "description": "Optional description of the file"}
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to workspace (e.g. 'output/report.pdf')",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional description of the file",
+                },
             },
-            "required": ["path"]
-        }
+            "required": ["path"],
+        },
     },
     {
         "name": "run_bash",
@@ -257,11 +279,17 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "command": {"type": "string", "description": "Shell command to execute"},
-                "timeout": {"type": "integer", "description": "Timeout in seconds (default 120)"}
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default 120)",
+                },
             },
-            "required": ["command"]
-        }
+            "required": ["command"],
+        },
     },
     # Task management tools
     {
@@ -271,10 +299,13 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "subject": {"type": "string", "description": "Brief task title"},
-                "description": {"type": "string", "description": "Detailed task description (optional)"}
+                "description": {
+                    "type": "string",
+                    "description": "Detailed task description (optional)",
+                },
             },
-            "required": ["subject"]
-        }
+            "required": ["subject"],
+        },
     },
     {
         "name": "task_get",
@@ -282,8 +313,8 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {"task_id": {"type": "integer"}},
-            "required": ["task_id"]
-        }
+            "required": ["task_id"],
+        },
     },
     {
         "name": "task_update",
@@ -292,21 +323,28 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "task_id": {"type": "integer"},
-                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
-                "addBlockedBy": {"type": "array", "items": {"type": "integer"}, "description": "Task IDs this task depends on"},
-                "addBlocks": {"type": "array", "items": {"type": "integer"}, "description": "Task IDs that depend on this task"}
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed"],
+                },
+                "addBlockedBy": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Task IDs this task depends on",
+                },
+                "addBlocks": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Task IDs that depend on this task",
+                },
             },
-            "required": ["task_id"]
-        }
+            "required": ["task_id"],
+        },
     },
     {
         "name": "task_list",
         "description": "List all tasks with their status.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     # Background task tools
     {
@@ -315,20 +353,31 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "command": {"type": "string", "description": "Shell command to run in background"},
-                "timeout": {"type": "integer", "description": "Timeout in seconds (default 300)"}
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to run in background",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default 300)",
+                },
             },
-            "required": ["command"]
-        }
+            "required": ["command"],
+        },
     },
     {
         "name": "check_background",
         "description": "Check status of background tasks. Omit task_id to list all.",
         "input_schema": {
             "type": "object",
-            "properties": {"task_id": {"type": "string", "description": "Specific task ID (optional)"}},
-            "required": []
-        }
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Specific task ID (optional)",
+                }
+            },
+            "required": [],
+        },
     },
     # Context management
     {
@@ -337,15 +386,19 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "focus": {"type": "string", "description": "What to preserve in the summary"}
+                "focus": {
+                    "type": "string",
+                    "description": "What to preserve in the summary",
+                }
             },
-            "required": []
-        }
-    }
+            "required": [],
+        },
+    },
 ]
 
 
 # ============== Context Compression Functions ==============
+
 
 def estimate_tokens(messages: list) -> int:
     """Rough token count estimation: ~4 chars per token."""
@@ -378,7 +431,9 @@ def microcompact(messages: list) -> list:
                     if hasattr(block, "type") and block.type == "tool_use":
                         tool_name_map[block.id] = block.name
                     elif isinstance(block, dict) and block.get("type") == "tool_use":
-                        tool_name_map[block.get("id", "")] = block.get("name", "unknown")
+                        tool_name_map[block.get("id", "")] = block.get(
+                            "name", "unknown"
+                        )
 
     # Clear old results (keep last KEEP_RECENT)
     to_clear = tool_results[:-KEEP_RECENT]
@@ -389,6 +444,32 @@ def microcompact(messages: list) -> list:
             result["content"] = f"[Previous: used {tool_name}]"
 
     return messages
+
+
+def _process_queued_message(
+    messages: list, user_content: list, qtext: str, qimages: list
+) -> None:
+    """Process a queued message and append to conversation."""
+    messages.append(
+        {"role": "user", "content": f"[New message from user]: {qtext}"}
+    )
+    for qimg in qimages:
+        user_content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": qimg.split(",", 1)[-1] if "," in qimg else qimg,
+                },
+            }
+        )
+    messages.append(
+        {
+            "role": "assistant",
+            "content": "I received your new message. I'll incorporate it into my current task.",
+        }
+    )
 
 
 async def auto_compact(messages: list, focus: str = None) -> list:
@@ -422,7 +503,7 @@ async def auto_compact(messages: list, focus: str = None) -> list:
         response = await client.messages.create(
             model=model_name,
             max_tokens=2000,
-            messages=[{"role": "user", "content": summary_prompt}]
+            messages=[{"role": "user", "content": summary_prompt}],
         )
         # Extract text from response, handling ThinkingBlock etc.
         text_parts = []
@@ -444,16 +525,17 @@ async def auto_compact(messages: list, focus: str = None) -> list:
                 f"- ALL file operations must be relative to this directory\n"
                 f"- Use `send_file` to send files to the user\n\n"
                 f"## Summary:\n{summary}"
-            )
+            ),
         },
         {
             "role": "assistant",
-            "content": "Understood. I have the context from the summary. Continuing."
-        }
+            "content": "Understood. I have the context from the summary. Continuing.",
+        },
     ]
 
 
 # ============== Main Agent Loop ==============
+
 
 async def run_agent_loop(
     pm: PlaywrightManager,
@@ -465,16 +547,37 @@ async def run_agent_loop(
     images: list = [],
     history_messages: list = [],
     uploaded_files: list = [],
-    session_store = None,
+    session_store=None,
     session_id: str = None,
-    web_queue_getter = None,
+    web_queue_getter=None,
     web_session_id: str = None,
+    cancel_event: asyncio.Event = None,
 ):
-    await ws_send_msg({
-        "message": f"Agent starting task: {user_instruction}",
-        "message_key": "common.agent_starting",
-        "params": {"task": user_instruction}
-    })
+    effective_session_id = web_session_id or session_id
+    if not effective_session_id:
+        await ws_send_msg(
+            {"message": "Error: No session ID provided", "message_key": "common.error"}
+        )
+        return
+
+    try:
+        page = await pm.get_or_create_page(effective_session_id)
+    except Exception as e:
+        await ws_send_msg(
+            {
+                "message": f"Error creating browser tab: {e}",
+                "message_key": "common.error",
+            }
+        )
+        return
+
+    await ws_send_msg(
+        {
+            "message": f"Agent starting task: {user_instruction}",
+            "message_key": "common.agent_starting",
+            "params": {"task": user_instruction},
+        }
+    )
 
     messages = history_messages.copy()
     max_steps = 9999999
@@ -486,9 +589,9 @@ async def run_agent_loop(
     # Add uploaded file paths to context
     if uploaded_files:
         context_parts.append(
-            f"The user has uploaded {len(uploaded_files)} file(s) which have been saved to:\n" +
-            "\n".join(f"  - {path}" for path in uploaded_files) +
-            "\n\nYou can use read_file, edit_file, or other file tools to work with these files."
+            f"The user has uploaded {len(uploaded_files)} file(s) which have been saved to:\n"
+            + "\n".join(f"  - {path}" for path in uploaded_files)
+            + "\n\nYou can use read_file, edit_file, or other file tools to work with these files."
         )
 
     # Handle images (base64 for LLM vision)
@@ -500,12 +603,16 @@ async def run_agent_loop(
 
     # Build the full user content
     if context_parts:
-        user_content = [{
-            "type": "text",
-            "text": "\n\n".join(context_parts) + f"\n\nTask: {user_instruction}"
-        }]
+        user_content = [
+            {
+                "type": "text",
+                "text": "\n\n".join(context_parts) + f"\n\nTask: {user_instruction}",
+            }
+        ]
     else:
-        user_content = [{"type": "text", "text": f"Please execute this task: {user_instruction}"}]
+        user_content = [
+            {"type": "text", "text": f"Please execute this task: {user_instruction}"}
+        ]
 
     # Add images as base64 for vision
     if images:
@@ -513,20 +620,36 @@ async def run_agent_loop(
             try:
                 header, b64_data = data_url.split(",", 1)
                 media_type = header.split(":")[1].split(";")[0]
-                user_content.append({
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": b64_data}
-                })
+                user_content.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": b64_data,
+                        },
+                    }
+                )
             except Exception as e:
                 print(f"Failed to parse image data-URL: {e}")
 
     for step in range(max_steps):
-        # Check for proactive takeover request
+        if cancel_event and cancel_event.is_set():
+            await ws_send_msg(
+                {
+                    "message": "Task cancelled by user.",
+                    "message_key": "common.task_cancelled",
+                }
+            )
+            break
+
         if pm.check_and_clear_pause_request():
-            await ws_send_msg({
-                "message": "Agent paused for manual takeover. Waiting for you to finish…",
-                "message_key": "common.agent_paused_for_takeover"
-            })
+            await ws_send_msg(
+                {
+                    "message": "Agent paused for manual takeover. Waiting for you to finish…",
+                    "message_key": "common.agent_paused_for_takeover",
+                }
+            )
             await pm.human_intervention_event.wait()
 
         # === Drain queued messages from other platforms ===
@@ -535,24 +658,9 @@ async def run_agent_loop(
             queued = session_store.drain_queue_nowait(session_id)
             if queued:
                 for qmsg in queued:
-                    qtext = qmsg.get("text", "")
-                    qimages = qmsg.get("images", [])
-                    # Add queued message to conversation
-                    messages.append({
-                        "role": "user",
-                        "content": f"[New message from user]: {qtext}"
-                    })
-                    # If there are images, we'll add them to the next observation
-                    if qimages:
-                        for qimg in qimages:
-                            user_content.append({
-                                "type": "image",
-                                "source": {"type": "base64", "media_type": "image/jpeg", "data": qimg.split(",", 1)[-1] if "," in qimg else qimg}
-                            })
-                    messages.append({
-                        "role": "assistant",
-                        "content": "I received your new message. I'll incorporate it into my current task."
-                    })
+                    _process_queued_message(
+                        messages, user_content, qmsg.get("text", ""), qmsg.get("images", [])
+                    )
 
         # Handle web queue
         if web_queue_getter and web_session_id:
@@ -561,22 +669,9 @@ async def run_agent_loop(
                 while not web_queue.empty():
                     try:
                         qmsg = web_queue.get_nowait()
-                        qtext = qmsg.get("text", "")
-                        qimages = qmsg.get("images", [])
-                        messages.append({
-                            "role": "user",
-                            "content": f"[New message from user]: {qtext}"
-                        })
-                        if qimages:
-                            for qimg in qimages:
-                                user_content.append({
-                                    "type": "image",
-                                    "source": {"type": "base64", "media_type": "image/jpeg", "data": qimg.split(",", 1)[-1] if "," in qimg else qimg}
-                                })
-                        messages.append({
-                            "role": "assistant",
-                            "content": "I received your new message. I'll incorporate it into my current task."
-                        })
+                        _process_queued_message(
+                            messages, user_content, qmsg.get("text", ""), qmsg.get("images", [])
+                        )
                     except asyncio.QueueEmpty:
                         break
 
@@ -584,50 +679,68 @@ async def run_agent_loop(
         bg_notifs = await background_manager.drain_notifications()
         if bg_notifs:
             notif_text = background_manager.format_notifications(bg_notifs)
-            messages.append({
-                "role": "user",
-                "content": f"<background-results>\n{notif_text}\n</background-results>"
-            })
-            messages.append({
-                "role": "assistant",
-                "content": "Noted background task results."
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"<background-results>\n{notif_text}\n</background-results>",
+                }
+            )
+            messages.append(
+                {"role": "assistant", "content": "Noted background task results."}
+            )
 
         # === NEW: Microcompact (Layer 1) ===
         microcompact(messages)
 
         # === NEW: Auto-compact check (Layer 2) ===
         if estimate_tokens(messages) > TOKEN_THRESHOLD:
-            await ws_send_msg({
-                "message": "Context threshold reached, compressing...",
-                "message_key": "common.context_compressing"
-            })
+            await ws_send_msg(
+                {
+                    "message": "Context threshold reached, compressing...",
+                    "message_key": "common.context_compressing",
+                }
+            )
             messages[:] = await auto_compact(messages)
             # Reset user_content after compression to avoid appending old data
             user_content = []
 
         # 1. Observe - append observation to user_content
-        if pm.page:
+        if page and not page.is_closed():
             try:
-                b64_img = await pm.get_page_screenshot_base64()
-                url = pm.page.url
-                title = await pm.page.title()
-                user_content.append({"type": "text", "text": f"Current URL: {url}\nTitle: {title}\nWhat is your next action?"})
+                b64_img = await pm.get_page_screenshot_base64(effective_session_id)
+                url = page.url
+                title = await page.title()
+                user_content.append(
+                    {
+                        "type": "text",
+                        "text": f"Current URL: {url}\nTitle: {title}\nWhat is your next action?",
+                    }
+                )
                 if b64_img:
-                    user_content.append({
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_img}
-                    })
+                    user_content.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": b64_img,
+                            },
+                        }
+                    )
             except Exception as e:
-                user_content.append({"type": "text", "text": f"Observation failed: {e}. Try to continue."})
+                user_content.append(
+                    {
+                        "type": "text",
+                        "text": f"Observation failed: {e}. Try to continue.",
+                    }
+                )
 
         messages.append({"role": "user", "content": user_content})
 
         # 2. Think
-        await ws_send_msg({
-            "message": "Agent is thinking...",
-            "message_key": "common.agent_thinking"
-        })
+        await ws_send_msg(
+            {"message": "Agent is thinking...", "message_key": "common.agent_thinking"}
+        )
 
         try:
             response = await client.messages.create(
@@ -635,7 +748,7 @@ async def run_agent_loop(
                 max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 messages=messages,
-                tools=TOOLS
+                tools=TOOLS,
             )
         except Exception as e:
             await ws_send_msg(f"Error calling LLM: {str(e)}")
@@ -652,7 +765,12 @@ async def run_agent_loop(
             if text_blocks:
                 msg = "\n".join(text_blocks)
                 await ws_send_msg("🤔 " + msg)
-                user_content.append({"type": "text", "text": "You didn't call any tools. Please use a tool to proceed."})
+                user_content.append(
+                    {
+                        "type": "text",
+                        "text": "You didn't call any tools. Please use a tool to proceed.",
+                    }
+                )
             continue
 
         manual_compact = False
@@ -662,20 +780,28 @@ async def run_agent_loop(
             args = tool.input
             result_str = ""
 
-            await ws_send_msg({
-                "message": f"Executing action: `{tool_name}` with args: {json.dumps(args, ensure_ascii=False)}",
-                "message_key": "common.executing_action",
-                "params": {"tool": tool_name, "args": json.dumps(args, ensure_ascii=False)}
-            })
+            await ws_send_msg(
+                {
+                    "message": f"Executing action: `{tool_name}` with args: {json.dumps(args, ensure_ascii=False)}",
+                    "message_key": "common.executing_action",
+                    "params": {
+                        "tool": tool_name,
+                        "args": json.dumps(args, ensure_ascii=False),
+                    },
+                }
+            )
 
             try:
-                # Browser tools
                 if tool_name == "snapshot":
-                    snapshot_text = await pm.get_aria_snapshot()
-                    result_str = snapshot_text if snapshot_text else "Could not capture aria snapshot."
+                    snapshot_text = await pm.get_aria_snapshot(effective_session_id)
+                    result_str = (
+                        snapshot_text
+                        if snapshot_text
+                        else "Could not capture aria snapshot."
+                    )
 
                 elif tool_name == "navigate":
-                    await pm.page.goto(args["url"])
+                    await page.goto(args["url"])
                     await asyncio.sleep(2)
                     result_str = "Successfully navigated."
 
@@ -683,10 +809,10 @@ async def run_agent_loop(
                     ref = args.get("ref")
                     selector = args.get("selector")
                     if ref:
-                        locator = await pm.locate_by_ref(ref)
+                        locator = await pm.locate_by_ref(ref, effective_session_id)
                         await locator.click(timeout=5000)
                     elif selector:
-                        await pm.page.click(selector, timeout=5000)
+                        await page.click(selector, timeout=5000)
                     else:
                         raise ValueError("click requires either 'ref' or 'selector'")
                     await asyncio.sleep(1)
@@ -696,20 +822,22 @@ async def run_agent_loop(
                     ref = args.get("ref")
                     selector = args.get("selector")
                     if ref:
-                        locator = await pm.locate_by_ref(ref)
+                        locator = await pm.locate_by_ref(ref, effective_session_id)
                         await locator.fill(args["text"])
                     elif selector:
-                        await pm.page.fill(selector, args["text"])
+                        await page.fill(selector, args["text"])
                     else:
-                        raise ValueError("type_text requires either 'ref' or 'selector'")
+                        raise ValueError(
+                            "type_text requires either 'ref' or 'selector'"
+                        )
                     result_str = "Successfully typed text."
 
                 elif tool_name == "scroll":
                     direction = args.get("direction", "down")
                     if direction == "down":
-                        await pm.page.mouse.wheel(0, 1000)
+                        await page.mouse.wheel(0, 1000)
                     else:
-                        await pm.page.mouse.wheel(0, -1000)
+                        await page.mouse.wheel(0, -1000)
                     await asyncio.sleep(1)
                     result_str = "Scrolled."
 
@@ -723,7 +851,9 @@ async def run_agent_loop(
 
                 elif tool_name == "send_screenshot":
                     description = args.get("description", "Current page screenshot")
-                    screenshot_b64 = await pm.get_page_screenshot_base64()
+                    screenshot_b64 = await pm.get_page_screenshot_base64(
+                        effective_session_id
+                    )
                     if screenshot_b64:
                         await ws_send_image(description, screenshot_b64)
                         result_str = f"Screenshot sent to user: {description}"
@@ -732,26 +862,30 @@ async def run_agent_loop(
 
                 elif tool_name == "finish_task":
                     report = args.get("report", "Task completed.")
-                    await ws_send_msg({
-                        "message": f"✅ **Task Completed**:\n\n{report}",
-                        "message_key": "common.task_completed",
-                        "params": {"report": report}
-                    })
+                    await ws_send_msg(
+                        {
+                            "message": f"✅ **Task Completed**:\n\n{report}",
+                            "message_key": "common.task_completed",
+                            "params": {"report": report},
+                        }
+                    )
                     result_str = "Finished."
                     is_finished = True
 
                 # File operation tools
                 elif tool_name == "read_file":
-                    result_str = await workspace.read_file(args["path"], args.get("limit"))
+                    result_str = await workspace.read_file(
+                        args["path"], args.get("limit")
+                    )
 
                 elif tool_name == "write_file":
-                    result_str = await workspace.write_file(args["path"], args["content"])
+                    result_str = await workspace.write_file(
+                        args["path"], args["content"]
+                    )
 
                 elif tool_name == "edit_file":
                     result_str = await workspace.edit_file(
-                        args["path"],
-                        args["old_text"],
-                        args["new_text"]
+                        args["path"], args["old_text"], args["new_text"]
                     )
 
                 elif tool_name == "send_file":
@@ -761,7 +895,9 @@ async def run_agent_loop(
                     full_path = WORKDIR / file_path
                     if not full_path.exists():
                         result_str = f"Error: File not found: {file_path}"
-                    elif not str(full_path.resolve()).startswith(str(WORKDIR.resolve())):
+                    elif not str(full_path.resolve()).startswith(
+                        str(WORKDIR.resolve())
+                    ):
                         result_str = f"Error: Path escapes workspace: {file_path}"
                     else:
                         await ws_send_file(file_path, description)
@@ -769,15 +905,13 @@ async def run_agent_loop(
 
                 elif tool_name == "run_bash":
                     result_str = await workspace.run_bash(
-                        args["command"],
-                        args.get("timeout", 120)
+                        args["command"], args.get("timeout", 120)
                     )
 
                 # Task management tools
                 elif tool_name == "task_create":
                     result_str = task_manager.create(
-                        args["subject"],
-                        args.get("description", "")
+                        args["subject"], args.get("description", "")
                     )
 
                 elif tool_name == "task_get":
@@ -788,7 +922,7 @@ async def run_agent_loop(
                         args["task_id"],
                         args.get("status"),
                         args.get("addBlockedBy"),
-                        args.get("addBlocks")
+                        args.get("addBlocks"),
                     )
 
                 elif tool_name == "task_list":
@@ -797,8 +931,7 @@ async def run_agent_loop(
                 # Background task tools
                 elif tool_name == "background_run":
                     result_str = await background_manager.run(
-                        args["command"],
-                        args.get("timeout")
+                        args["command"], args.get("timeout")
                     )
 
                 elif tool_name == "check_background":
@@ -808,7 +941,9 @@ async def run_agent_loop(
                 elif tool_name == "compact":
                     manual_compact = True
                     focus = args.get("focus")
-                    result_str = f"Manual compression requested{': ' + focus if focus else ''}."
+                    result_str = (
+                        f"Manual compression requested{': ' + focus if focus else ''}."
+                    )
 
                 else:
                     result_str = f"Unknown tool: {tool_name}"
@@ -816,18 +951,18 @@ async def run_agent_loop(
             except Exception as e:
                 result_str = f"Error executing {tool_name}: {str(e)}"
 
-            user_content.append({
-                "type": "tool_result",
-                "tool_use_id": tool.id,
-                "content": result_str
-            })
+            user_content.append(
+                {"type": "tool_result", "tool_use_id": tool.id, "content": result_str}
+            )
 
         # === NEW: Handle manual compact (Layer 3) ===
         if manual_compact:
-            await ws_send_msg({
-                "message": "Manual compression triggered...",
-                "message_key": "common.manual_compressing"
-            })
+            await ws_send_msg(
+                {
+                    "message": "Manual compression triggered...",
+                    "message_key": "common.manual_compressing",
+                }
+            )
             focus = None
             for tool in tool_uses:
                 if tool.name == "compact" and tool.input.get("focus"):
@@ -840,7 +975,9 @@ async def run_agent_loop(
             break
 
     if not is_finished:
-        await ws_send_msg({
-            "message": "⚠️ Task reached maximum steps without calling finish_task.",
-            "message_key": "common.max_steps_error"
-        })
+        await ws_send_msg(
+            {
+                "message": "⚠️ Task reached maximum steps without calling finish_task.",
+                "message_key": "common.max_steps_error",
+            }
+        )
