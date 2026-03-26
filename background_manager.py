@@ -15,7 +15,9 @@ Timeline:
 """
 
 import os
+import signal
 import asyncio
+import contextlib
 import uuid
 from typing import Optional, Dict, List, Any
 from pathlib import Path
@@ -43,7 +45,12 @@ class BackgroundManager:
         self._notification_queue: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
 
-    async def run(self, command: str, timeout: int = None) -> str:
+    async def run(
+        self,
+        command: str,
+        timeout: int = None,
+        session_id: Optional[str] = None,
+    ) -> str:
         """
         Start a background async task.
 
@@ -63,15 +70,60 @@ class BackgroundManager:
             "result": None,
             "command": command,
             "start_time": time.time(),
-            "timeout": use_timeout
+            "timeout": use_timeout,
+            "session_id": session_id,
+            "cancel_requested": False,
+            "process": None,
+            "runner_task": None,
         }
 
         # Create asyncio task
-        asyncio.create_task(self._execute(task_id, command, use_timeout))
+        runner_task = asyncio.create_task(
+            self._execute(task_id, command, use_timeout, session_id)
+        )
+        self.tasks[task_id]["runner_task"] = runner_task
 
         return f"Background task {task_id} started: {command[:80]}"
 
-    async def _execute(self, task_id: str, command: str, timeout: int):
+    async def _terminate_process(self, process, grace_period: float = 3.0) -> None:
+        """Terminate a background subprocess and its child processes if possible."""
+        if process.returncode is not None:
+            return
+
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            return
+
+        try:
+            await asyncio.wait_for(process.wait(), timeout=grace_period)
+            return
+        except asyncio.TimeoutError:
+            pass
+        except ProcessLookupError:
+            return
+
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            return
+
+        with contextlib.suppress(Exception):
+            await process.wait()
+
+    async def _execute(
+        self,
+        task_id: str,
+        command: str,
+        timeout: int,
+        session_id: Optional[str] = None,
+    ):
         """
         Execute a command in background (asyncio task target).
 
@@ -80,13 +132,17 @@ class BackgroundManager:
             command: Shell command
             timeout: Timeout in seconds
         """
+        process = None
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.workdir)
+                cwd=str(self.workdir),
+                start_new_session=(os.name == "posix"),
             )
+            if task_id in self.tasks:
+                self.tasks[task_id]["process"] = process
 
             try:
                 stdout, stderr = await asyncio.wait_for(
@@ -96,10 +152,20 @@ class BackgroundManager:
                 output = (stdout.decode() + stderr.decode()).strip()
                 status = "completed"
             except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                output = f"Error: Timeout ({timeout}s)"
-                status = "timeout"
+                if self.tasks.get(task_id, {}).get("cancel_requested"):
+                    if process and process.returncode is None:
+                        await self._terminate_process(process)
+                    output = "Task cancelled by user"
+                    status = "cancelled"
+                else:
+                    await self._terminate_process(process, grace_period=0.5)
+                    output = f"Error: Timeout ({timeout}s)"
+                    status = "timeout"
+        except asyncio.CancelledError:
+            if process and process.returncode is None:
+                await self._terminate_process(process)
+            output = "Task cancelled by user"
+            status = "cancelled"
 
         except Exception as e:
             output = f"Error: {str(e)}"
@@ -107,9 +173,14 @@ class BackgroundManager:
 
         # Update task record
         if task_id in self.tasks:
-            self.tasks[task_id]["status"] = status
-            self.tasks[task_id]["result"] = output or "(no output)"
-            self.tasks[task_id]["end_time"] = time.time()
+            task = self.tasks[task_id]
+            if task.get("cancel_requested"):
+                status = "cancelled"
+                output = output or "Task cancelled by user"
+            task["status"] = status
+            task["result"] = output or "(no output)"
+            task["end_time"] = time.time()
+            task["process"] = None
 
         # Add to notification queue
         async with self._lock:
@@ -118,7 +189,8 @@ class BackgroundManager:
                 "status": status,
                 "command": command[:80],
                 "result": (output or "(no output)")[:500],
-                "elapsed": time.time() - self.tasks[task_id].get("start_time", time.time())
+                "elapsed": time.time() - self.tasks[task_id].get("start_time", time.time()),
+                "session_id": session_id,
             })
 
     async def check(self, task_id: Optional[str] = None) -> str:
@@ -156,7 +228,9 @@ class BackgroundManager:
 
         return "\n".join(lines)
 
-    async def drain_notifications(self) -> List[Dict[str, Any]]:
+    async def drain_notifications(
+        self, session_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Return and clear all pending completion notifications.
 
@@ -164,8 +238,20 @@ class BackgroundManager:
             List of notification dictionaries
         """
         async with self._lock:
-            notifs = list(self._notification_queue)
-            self._notification_queue.clear()
+            if session_id is None:
+                notifs = list(self._notification_queue)
+                self._notification_queue.clear()
+                return notifs
+
+            matching = []
+            remaining = []
+            for notif in self._notification_queue:
+                if notif.get("session_id") == session_id:
+                    matching.append(notif)
+                else:
+                    remaining.append(notif)
+            self._notification_queue = remaining
+            notifs = matching
         return notifs
 
     def format_notifications(self, notifs: List[Dict[str, Any]]) -> str:
@@ -206,11 +292,38 @@ class BackgroundManager:
         if t["status"] != "running":
             return f"Task {task_id} is not running (status: {t['status']})"
 
-        # Mark as cancelled
+        t["cancel_requested"] = True
+
+        process = t.get("process")
+        runner_task = t.get("runner_task")
+
+        if process and process.returncode is None:
+            await self._terminate_process(process)
+        elif runner_task and not runner_task.done():
+            runner_task.cancel()
+
+        if runner_task and not runner_task.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                await runner_task
+
         t["status"] = "cancelled"
         t["result"] = "Task cancelled by user"
+        t["end_time"] = time.time()
 
         return f"Task {task_id} cancelled."
+
+    async def cancel_by_session(self, session_id: str) -> int:
+        """Cancel all running background tasks for a specific session."""
+        task_ids = [
+            task_id
+            for task_id, task in self.tasks.items()
+            if task.get("session_id") == session_id and task.get("status") == "running"
+        ]
+
+        for task_id in task_ids:
+            await self.cancel(task_id)
+
+        return len(task_ids)
 
     async def cleanup_completed(self, max_age: int = 3600) -> int:
         """
