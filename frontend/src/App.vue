@@ -20,6 +20,7 @@ const ws = ref<WebSocket | null>(null)
 const isConnected = ref(false)
 const isInTakeover = ref(false)
 const isTaskRunning = ref(false)
+const isAgentThinking = ref(false)
 const browserFrame = ref('')
 const browserUrl = ref('')
 const browserViewport = ref({ width: 1280, height: 800 })
@@ -44,7 +45,18 @@ function connectWs(sessionId: string) {
     }
     if (data.type === 'task_status') {
       isTaskRunning.value = data.status === 'running'
+      if (data.status !== 'running') {
+        isAgentThinking.value = false
+      }
       return
+    }
+    if (data.message_key === 'common.agent_thinking') {
+      isAgentThinking.value = true
+      if (!debugMode.value) {
+        return
+      }
+    } else {
+      isAgentThinking.value = false
     }
     if (data.type === 'takeover_started') {
       isInTakeover.value = true
@@ -71,6 +83,7 @@ function connectWs(sessionId: string) {
   socket.onclose = () => {
     isConnected.value = false
     isInTakeover.value = false
+    isAgentThinking.value = false
     // Re-connect after 3s
     setTimeout(() => {
       if (activeChatId.value) connectWs(activeChatId.value)
@@ -119,7 +132,7 @@ function isToolCallMessage(msg: any): boolean {
 }
 
 function isHiddenMessage(msg: any): boolean {
-  const hiddenKeys = ['common.connected_ws', 'common.context_compressing', 'common.manual_compressing', 'common.agent_resumed', 'common.sent_resume', 'common.message_queued']
+  const hiddenKeys = ['common.connected_ws', 'common.context_compressing', 'common.manual_compressing', 'common.agent_resumed', 'common.sent_resume', 'common.message_queued', 'common.agent_thinking']
   if (hiddenKeys.includes(msg.message_key)) return true
   if (msg.message === 'Connected to NeoFish Agent WebSocket') return true
   if (msg.message && msg.message.includes('Context threshold reached')) return true
@@ -141,6 +154,9 @@ function getToolDisplayName(toolName: string): string {
 }
 
 function translateMessageFallback(msg: string): { message_key?: string; params?: Record<string, any> } {
+  if (msg === 'Agent is thinking...') {
+    return { message_key: 'common.agent_thinking' }
+  }
   if (msg === '[Takeover] Browser opened for manual interaction.') {
     return { message_key: 'common.takeover_browser_opened' }
   }
@@ -190,6 +206,10 @@ interface ProcessedMessage {
     isActive: boolean
   }
 }
+
+const showThinkingStatus = computed(() => {
+  return hasStarted.value && isTaskRunning.value && isAgentThinking.value && !isInTakeover.value && !debugMode.value
+})
 
 const processedMessages = computed(() => {
   if (debugMode.value) {
@@ -274,6 +294,7 @@ async function switchToSession(id: string) {
   messages.value = []
   hasStarted.value = false
   isInTakeover.value = false
+  isAgentThinking.value = false
   browserFrame.value = ''
 
   // Load existing messages from backend
@@ -326,6 +347,7 @@ async function handleNewChat() {
   messages.value = []
   hasStarted.value = false
   isInTakeover.value = false
+  isAgentThinking.value = false
   browserFrame.value = ''
   if (activeChatId.value) {
     connectWs(activeChatId.value)
@@ -336,6 +358,7 @@ async function handleNewChat() {
 function handleUserSubmit(payload: { text: string; images: string[]; files: { name: string; data: string; type: string }[] }) {
   const { text, images, files } = payload
   hasStarted.value = true
+  isAgentThinking.value = false
   pushMessage({ type: 'user', message: text, images, files })
   // Always scroll to bottom when user sends a message
   scrollToBottom()
@@ -353,6 +376,7 @@ function handleUserSubmit(payload: { text: string; images: string[]; files: { na
 function resumeAgent() {
   if (ws.value && isConnected.value) {
     ws.value.send(JSON.stringify({ type: 'resume' }))
+    isAgentThinking.value = false
     pushMessage({ type: 'info', message: '已发送继续执行指令。' })
   }
 }
@@ -361,12 +385,14 @@ function stopTask() {
   if (ws.value && isConnected.value) {
     ws.value.send(JSON.stringify({ type: 'stop_task' }))
     isTaskRunning.value = false
+    isAgentThinking.value = false
   }
 }
 
 /** Request an embedded browser takeover. */
 function requestTakeover() {
   if (ws.value && isConnected.value) {
+    isAgentThinking.value = false
     ws.value.send(JSON.stringify({ type: 'takeover' }))
   }
 }
@@ -374,6 +400,7 @@ function requestTakeover() {
 /** Signal that the user is finished with the embedded browser takeover. */
 function signalTakeoverDone() {
   if (ws.value && isConnected.value) {
+    isAgentThinking.value = false
     ws.value.send(JSON.stringify({ type: 'takeover_done' }))
   }
 }
@@ -599,6 +626,21 @@ onUnmounted(() => {
 
         <!-- Sticky bottom input -->
         <div class="theme-gradient-bottom sticky bottom-0 pb-4 pt-4 backdrop-blur-sm">
+          <Transition
+            enter-active-class="transition-all duration-200 ease-out"
+            leave-active-class="transition-all duration-150 ease-in"
+            enter-from-class="opacity-0 translate-y-2"
+            leave-to-class="opacity-0 translate-y-2"
+          >
+            <div
+              v-if="showThinkingStatus"
+              class="theme-card-soft mx-auto mb-3 flex w-fit items-center gap-2 rounded-full px-3 py-1.5 shadow-sm"
+              style="border: 1px solid var(--border-muted);"
+            >
+              <span class="h-2 w-2 animate-pulse rounded-full bg-amber-500"></span>
+              <span class="theme-text-muted text-sm font-medium">{{ $t('status.thinking') }}</span>
+            </div>
+          </Transition>
           <MainInput :minimal="true" @submit="handleUserSubmit" class="!my-0 !h-auto" />
         </div>
       </div>
