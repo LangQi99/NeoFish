@@ -450,9 +450,7 @@ def _process_queued_message(
     messages: list, user_content: list, qtext: str, qimages: list
 ) -> None:
     """Process a queued message and append to conversation."""
-    messages.append(
-        {"role": "user", "content": f"[New message from user]: {qtext}"}
-    )
+    messages.append({"role": "user", "content": f"[New message from user]: {qtext}"})
     for qimg in qimages:
         user_content.append(
             {
@@ -643,14 +641,14 @@ async def run_agent_loop(
             )
             break
 
-        if pm.check_and_clear_pause_request():
+        if pm.check_and_clear_pause_request(effective_session_id):
             await ws_send_msg(
                 {
                     "message": "Agent paused for manual takeover. Waiting for you to finish…",
                     "message_key": "common.agent_paused_for_takeover",
                 }
             )
-            await pm.human_intervention_event.wait()
+            await pm.wait_for_resume(effective_session_id)
 
         # === Drain queued messages from other platforms ===
         # Handle session_store (QQ, Telegram)
@@ -659,7 +657,10 @@ async def run_agent_loop(
             if queued:
                 for qmsg in queued:
                     _process_queued_message(
-                        messages, user_content, qmsg.get("text", ""), qmsg.get("images", [])
+                        messages,
+                        user_content,
+                        qmsg.get("text", ""),
+                        qmsg.get("images", []),
                     )
 
         # Handle web queue
@@ -670,13 +671,16 @@ async def run_agent_loop(
                     try:
                         qmsg = web_queue.get_nowait()
                         _process_queued_message(
-                            messages, user_content, qmsg.get("text", ""), qmsg.get("images", [])
+                            messages,
+                            user_content,
+                            qmsg.get("text", ""),
+                            qmsg.get("images", []),
                         )
                     except asyncio.QueueEmpty:
                         break
 
         # === NEW: Drain background notifications ===
-        bg_notifs = await background_manager.drain_notifications()
+        bg_notifs = await background_manager.drain_notifications(effective_session_id)
         if bg_notifs:
             notif_text = background_manager.format_notifications(bg_notifs)
             messages.append(
@@ -843,7 +847,9 @@ async def run_agent_loop(
 
                 elif tool_name == "request_human_assistance":
                     reason = args.get("reason", "Login required.")
-                    await pm.block_for_human(ws_request_action, reason)
+                    await pm.block_for_human(
+                        ws_request_action, reason, effective_session_id
+                    )
                     result_str = "Human has processed the request. Page might have updated. You may resume your task."
 
                 elif tool_name == "extract_info":
@@ -931,7 +937,9 @@ async def run_agent_loop(
                 # Background task tools
                 elif tool_name == "background_run":
                     result_str = await background_manager.run(
-                        args["command"], args.get("timeout")
+                        args["command"],
+                        args.get("timeout"),
+                        effective_session_id,
                     )
 
                 elif tool_name == "check_background":
@@ -981,3 +989,5 @@ async def run_agent_loop(
                 "message_key": "common.max_steps_error",
             }
         )
+
+    pm.deactivate_tab(effective_session_id)

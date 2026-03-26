@@ -24,7 +24,7 @@ CLEANUP_INTERVAL = 300
 @dataclass
 class TabSession:
     session_id: str
-    page: Page
+    page: Optional[Page]
     last_url: str = "about:blank"
     last_active: float = field(default_factory=time.time)
     is_active: bool = True
@@ -32,8 +32,11 @@ class TabSession:
     def touch(self):
         self.last_active = time.time()
 
+    def has_live_page(self) -> bool:
+        return self.page is not None and not self.page.is_closed()
+
     def is_expired(self, ttl: int) -> bool:
-        if self.is_active:
+        if self.is_active or not self.has_live_page():
             return False
         return (time.time() - self.last_active) > ttl
 
@@ -71,18 +74,18 @@ class TabManager:
 
     @property
     def active_count(self) -> int:
-        return sum(1 for t in self._tabs.values() if t.is_active)
+        return sum(1 for t in self._tabs.values() if t.is_active and t.has_live_page())
 
     @property
     def total_count(self) -> int:
-        return len(self._tabs)
+        return sum(1 for t in self._tabs.values() if t.has_live_page())
 
     def has_tab(self, session_id: str) -> bool:
         return session_id in self._tabs
 
     def get_active_page(self, session_id: str) -> Optional[Page]:
         tab = self._tabs.get(session_id)
-        if tab and tab.is_active and not tab.page.is_closed():
+        if tab and tab.has_live_page():
             tab.touch()
             self._update_lru(session_id)
             return tab.page
@@ -91,12 +94,16 @@ class TabManager:
     async def get_or_create_tab(self, session_id: str) -> Page:
         tab = self._tabs.get(session_id)
 
-        if tab and tab.is_active and not tab.page.is_closed():
+        if tab and tab.has_live_page():
+            tab.is_active = True
             tab.touch()
             self._update_lru(session_id)
             return tab.page
 
-        if tab and (not tab.is_active or tab.page.is_closed()):
+        if self.total_count >= self.max_tabs:
+            await self._evict_lru_tab()
+
+        if tab:
             page = await self.context.new_page()
             tab.page = page
             tab.is_active = True
@@ -113,9 +120,6 @@ class TabManager:
 
             return page
 
-        if len(self._tabs) >= self.max_tabs:
-            await self._evict_lru_tab()
-
         page = await self.context.new_page()
         self._tabs[session_id] = TabSession(
             session_id=session_id,
@@ -126,18 +130,26 @@ class TabManager:
 
         return page
 
-    async def close_tab(self, session_id: str, save_url: bool = True):
-        await self._close_tab_internal(session_id, save_url=save_url)
+    async def close_tab(
+        self,
+        session_id: str,
+        save_url: bool = True,
+        preserve_session: bool = True,
+    ):
+        await self._close_tab_internal(
+            session_id, save_url=save_url, preserve_session=preserve_session
+        )
 
     def deactivate_tab(self, session_id: str):
         tab = self._tabs.get(session_id)
         if tab:
             tab.is_active = False
             try:
-                if tab.page and not tab.page.is_closed():
+                if tab.has_live_page():
                     tab.last_url = tab.page.url
             except Exception:
                 pass
+            tab.touch()
 
     def activate_tab(self, session_id: str):
         tab = self._tabs.get(session_id)
@@ -150,31 +162,43 @@ class TabManager:
         tab = self._tabs.get(session_id)
         if tab:
             try:
-                if tab.page and not tab.page.is_closed():
+                if tab.has_live_page():
                     tab.last_url = tab.page.url
             except Exception:
                 pass
 
-    async def _close_tab_internal(self, session_id: str, save_url: bool = True):
+    async def _close_tab_internal(
+        self,
+        session_id: str,
+        save_url: bool = True,
+        preserve_session: bool = True,
+    ):
         tab = self._tabs.get(session_id)
         if not tab:
             return
 
         if save_url:
             try:
-                if tab.page and not tab.page.is_closed():
+                if tab.has_live_page():
                     tab.last_url = tab.page.url
             except Exception:
                 pass
 
         try:
-            if tab.page and not tab.page.is_closed():
+            if tab.has_live_page():
                 await tab.page.close()
         except Exception as e:
             logger.warning("Error closing page for %s: %s", session_id, e)
 
-        del self._tabs[session_id]
         self._lru_order.pop(session_id, None)
+
+        if preserve_session:
+            tab.page = None
+            tab.is_active = False
+            tab.touch()
+            return
+
+        del self._tabs[session_id]
 
     def _update_lru(self, session_id: str):
         self._lru_order.pop(session_id, None)
@@ -187,16 +211,22 @@ class TabManager:
         lru_session = None
         for session_id in self._lru_order:
             tab = self._tabs.get(session_id)
-            if tab and not tab.is_active:
+            if tab and tab.has_live_page() and not tab.is_active:
                 lru_session = session_id
                 break
 
         if not lru_session:
-            lru_session = next(iter(self._lru_order), None)
+            for session_id in self._lru_order:
+                tab = self._tabs.get(session_id)
+                if tab and tab.has_live_page():
+                    lru_session = session_id
+                    break
 
         if lru_session:
             logger.info("Evicting LRU tab for session %s", lru_session)
-            await self._close_tab_internal(lru_session, save_url=True)
+            await self._close_tab_internal(
+                lru_session, save_url=True, preserve_session=True
+            )
 
     async def _cleanup_loop(self):
         while self._running:
@@ -216,7 +246,9 @@ class TabManager:
 
         for session_id in to_close:
             logger.info("TTL expired for session %s", session_id)
-            await self._close_tab_internal(session_id, save_url=True)
+            await self._close_tab_internal(
+                session_id, save_url=True, preserve_session=True
+            )
 
     def get_stats(self) -> dict:
         return {
@@ -227,6 +259,7 @@ class TabManager:
             "sessions": [
                 {
                     "session_id": sid,
+                    "has_open_page": tab.has_live_page(),
                     "is_active": tab.is_active,
                     "last_url": tab.last_url[:100] if tab.last_url else "",
                     "last_active_ago": int(time.time() - tab.last_active),

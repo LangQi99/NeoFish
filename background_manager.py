@@ -43,7 +43,12 @@ class BackgroundManager:
         self._notification_queue: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
 
-    async def run(self, command: str, timeout: int = None) -> str:
+    async def run(
+        self,
+        command: str,
+        timeout: int = None,
+        session_id: Optional[str] = None,
+    ) -> str:
         """
         Start a background async task.
 
@@ -63,15 +68,22 @@ class BackgroundManager:
             "result": None,
             "command": command,
             "start_time": time.time(),
-            "timeout": use_timeout
+            "timeout": use_timeout,
+            "session_id": session_id,
         }
 
         # Create asyncio task
-        asyncio.create_task(self._execute(task_id, command, use_timeout))
+        asyncio.create_task(self._execute(task_id, command, use_timeout, session_id))
 
         return f"Background task {task_id} started: {command[:80]}"
 
-    async def _execute(self, task_id: str, command: str, timeout: int):
+    async def _execute(
+        self,
+        task_id: str,
+        command: str,
+        timeout: int,
+        session_id: Optional[str] = None,
+    ):
         """
         Execute a command in background (asyncio task target).
 
@@ -118,7 +130,8 @@ class BackgroundManager:
                 "status": status,
                 "command": command[:80],
                 "result": (output or "(no output)")[:500],
-                "elapsed": time.time() - self.tasks[task_id].get("start_time", time.time())
+                "elapsed": time.time() - self.tasks[task_id].get("start_time", time.time()),
+                "session_id": session_id,
             })
 
     async def check(self, task_id: Optional[str] = None) -> str:
@@ -156,7 +169,9 @@ class BackgroundManager:
 
         return "\n".join(lines)
 
-    async def drain_notifications(self) -> List[Dict[str, Any]]:
+    async def drain_notifications(
+        self, session_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Return and clear all pending completion notifications.
 
@@ -164,8 +179,20 @@ class BackgroundManager:
             List of notification dictionaries
         """
         async with self._lock:
-            notifs = list(self._notification_queue)
-            self._notification_queue.clear()
+            if session_id is None:
+                notifs = list(self._notification_queue)
+                self._notification_queue.clear()
+                return notifs
+
+            matching = []
+            remaining = []
+            for notif in self._notification_queue:
+                if notif.get("session_id") == session_id:
+                    matching.append(notif)
+                else:
+                    remaining.append(notif)
+            self._notification_queue = remaining
+            notifs = matching
         return notifs
 
     def format_notifications(self, notifs: List[Dict[str, Any]]) -> str:

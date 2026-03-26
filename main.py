@@ -201,6 +201,8 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     except Exception as e:
         print(f"WebSocket error: {e}")
+    finally:
+        await adapter.stop()
 
 
 if __name__ == "__main__":

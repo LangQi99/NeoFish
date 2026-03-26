@@ -55,8 +55,9 @@ class PlaywrightManager:
         self._takeover_session_id: Optional[str] = None
         self._takeover_event: Optional[asyncio.Event] = None
         self._takeover_final_url: str = "about:blank"
-        self._pause_requested: bool = False
-        self._ref_map: dict[str, tuple[str, str]] = {}
+        self._pause_requested: dict[str, bool] = {}  # session_id -> pause requested
+        self._pause_events: dict[str, asyncio.Event] = {}  # session_id -> event
+        self._ref_map: dict[str, dict[str, tuple[str, str]]] = {}
 
         self._stream_running: bool = False
         self._stream_task: Optional[asyncio.Task] = None
@@ -119,6 +120,8 @@ class PlaywrightManager:
     def deactivate_tab(self, session_id: str):
         if self.tab_manager:
             self.tab_manager.deactivate_tab(session_id)
+        if self._current_session_id == session_id:
+            self._current_session_id = None
 
     async def get_page_screenshot_base64(self, session_id: Optional[str] = None) -> str:
         page = self._get_page(session_id)
@@ -139,7 +142,12 @@ class PlaywrightManager:
         except Exception:
             return ""
 
-        self._ref_map = {}
+        effective_session = session_id or self._current_session_id
+        if not effective_session:
+            return raw_yaml
+
+        session_ref_map: dict[str, tuple[str, str]] = {}
+        self._ref_map[effective_session] = session_ref_map
         counter = 0
         annotated_lines: list[str] = []
 
@@ -151,7 +159,7 @@ class PlaywrightManager:
                     counter += 1
                     ref = f"e{counter}"
                     name = quoted_name.strip(' "') if quoted_name else ""
-                    self._ref_map[ref] = (role, name)
+                    session_ref_map[ref] = (role, name)
                     annotated_lines.append(
                         f"{indent_dash}{role}{quoted_name} [ref={ref}]{rest}"
                     )
@@ -163,7 +171,10 @@ class PlaywrightManager:
     async def locate_by_ref(
         self, ref: str, session_id: Optional[str] = None
     ) -> Locator:
-        if ref not in self._ref_map:
+        effective_session = session_id or self._current_session_id
+        session_ref_map = self._ref_map.get(effective_session or "", {})
+
+        if ref not in session_ref_map:
             raise ValueError(
                 f"Unknown ref '{ref}'. Call the snapshot tool first, then use the "
                 "ref IDs shown in the output."
@@ -171,7 +182,7 @@ class PlaywrightManager:
         page = self._get_page(session_id)
         if not page:
             raise RuntimeError("No active page")
-        role, name = self._ref_map[ref]
+        role, name = session_ref_map[ref]
         if name:
             return page.get_by_role(role, name=name)
         return page.get_by_role(role)
@@ -202,28 +213,46 @@ class PlaywrightManager:
         self,
         callback: Callable[[str, str], Awaitable[None]],
         reason: str = "Login Required",
+        session_id: Optional[str] = None,
     ):
-        self.human_intervention_event.clear()
+        effective_session = session_id or self._current_session_id
+        if effective_session and effective_session not in self._pause_events:
+            self._pause_events[effective_session] = asyncio.Event()
+        if effective_session:
+            self._pause_events[effective_session].clear()
 
-        screenshot_b64 = await self.get_page_screenshot_base64()
+        screenshot_b64 = await self.get_page_screenshot_base64(session_id)
         await callback(reason, screenshot_b64)
 
         print(f"Agent blocked. Reason: {reason}. Waiting for human signal…")
-        await self.human_intervention_event.wait()
+        if effective_session:
+            await self._pause_events[effective_session].wait()
+        else:
+            await self.human_intervention_event.wait()
         print("Human signal received. Agent resuming…")
 
     def resume_from_human(self):
         self.human_intervention_event.set()
 
-    def request_pause(self):
-        self.human_intervention_event.clear()
-        self._pause_requested = True
+    def request_pause(self, session_id: str):
+        self._pause_requested[session_id] = True
+        if session_id not in self._pause_events:
+            self._pause_events[session_id] = asyncio.Event()
+        self._pause_events[session_id].clear()
 
-    def check_and_clear_pause_request(self) -> bool:
-        if self._pause_requested:
-            self._pause_requested = False
+    def check_and_clear_pause_request(self, session_id: str) -> bool:
+        if self._pause_requested.get(session_id, False):
+            self._pause_requested[session_id] = False
             return True
         return False
+
+    async def wait_for_resume(self, session_id: str):
+        if session_id in self._pause_events:
+            await self._pause_events[session_id].wait()
+
+    def signal_resume(self, session_id: str):
+        if session_id in self._pause_events:
+            self._pause_events[session_id].set()
 
     @property
     def in_takeover(self) -> bool:

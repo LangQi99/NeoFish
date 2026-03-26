@@ -89,6 +89,7 @@ class WebAdapter(PlatformAdapter):
         self._sessions = sessions
         self._save_sessions = save_sessions
         self._uploads_dir = uploads_dir
+        self._workspace_dir = uploads_dir.parent
         self._pm = playwright_manager
         self._run_agent = run_agent
 
@@ -107,22 +108,39 @@ class WebAdapter(PlatformAdapter):
         )
 
         task_status = task_manager.get_task_status(self._session_id)
-        if task_status:
-            await self._ws.send_text(
-                json.dumps(
-                    {
-                        "type": "task_status",
-                        "status": task_status.value,
-                    }
-                )
+        await self._ws.send_text(
+            json.dumps(
+                {
+                    "type": "task_status",
+                    "status": task_status.value if task_status else None,
+                }
             )
+        )
 
         buffered = task_manager.get_buffered_messages(self._session_id)
         for msg_data in buffered:
             await self._ws.send_text(json.dumps(msg_data["message"]))
 
     async def stop(self) -> None:
-        """No-op: WebSocket lifecycle is managed by FastAPI."""
+        if not task_manager.has_running_task(self._session_id):
+            self._pm.deactivate_tab(self._session_id)
+
+    def _is_ws_connected(self) -> bool:
+        client_state = getattr(self._ws, "client_state", None)
+        return bool(client_state and client_state.name == "CONNECTED")
+
+    async def _send_packet(
+        self, packet: dict, *, buffer_on_disconnect: bool = True
+    ) -> None:
+        try:
+            if self._is_ws_connected():
+                await self._ws.send_text(json.dumps(packet))
+                return
+        except Exception as e:
+            logger.warning("WebSocket send failed for session %s: %s", self._session_id, e)
+
+        if buffer_on_disconnect:
+            task_manager.buffer_message(self._session_id, packet)
 
     async def send_message(
         self,
@@ -132,7 +150,7 @@ class WebAdapter(PlatformAdapter):
     ) -> None:
         """Send a plain text (+ optional images) assistant message."""
         packet: dict = {"type": "info", "message": text}
-        await self._ws.send_text(json.dumps(packet))
+        await self._send_packet(packet)
         self._append_message("assistant", text)
 
     async def request_action(
@@ -145,7 +163,7 @@ class WebAdapter(PlatformAdapter):
         payload = {"type": "action_required", "reason": reason}
         if image:
             payload["image"] = image
-        await self._ws.send_text(json.dumps(payload))
+        await self._send_packet(payload)
         self._append_message(
             "assistant",
             f"[Action Required] {reason}",
@@ -160,11 +178,15 @@ class WebAdapter(PlatformAdapter):
     ) -> None:
         """Send a file to the web user."""
         try:
+            full_path = Path(file_path)
+            if not full_path.is_absolute():
+                full_path = (self._workspace_dir / full_path).resolve()
+
             # Read file and encode to base64
-            with open(file_path, "rb") as f:
+            with open(full_path, "rb") as f:
                 file_bytes = f.read()
 
-            filename = file_path.split("/")[-1]
+            filename = full_path.name
             b64_data = base64.b64encode(file_bytes).decode()
 
             # Determine MIME type
@@ -178,7 +200,7 @@ class WebAdapter(PlatformAdapter):
                 "data": b64_data,
                 "description": description,
             }
-            await self._ws.send_text(json.dumps(payload))
+            await self._send_packet(payload)
             self._append_message("assistant", f"[File] {description or filename}")
         except Exception as e:
             logger.error("Failed to send file to web user: %s", e)
@@ -222,7 +244,7 @@ class WebAdapter(PlatformAdapter):
             "description": description,
             "image": b64_image,
         }
-        await self._ws.send_text(json.dumps(payload))
+        await self._send_packet(payload)
         self._append_message(
             "assistant", f"[Image] {description}", image_data=b64_image
         )
@@ -281,52 +303,45 @@ class WebAdapter(PlatformAdapter):
     async def _handle_stop_task(self) -> None:
         success = await task_manager.stop_task(self._session_id)
         if success:
-            await self._ws.send_text(
-                json.dumps(
-                    {
-                        "type": "info",
-                        "message": "Task stopped.",
-                        "message_key": "common.task_stopped",
-                    }
-                )
+            await self._send_packet(
+                {
+                    "type": "info",
+                    "message": "Task stopped.",
+                    "message_key": "common.task_stopped",
+                }
             )
         else:
-            await self._ws.send_text(
-                json.dumps(
-                    {
-                        "type": "info",
-                        "message": "No running task to stop.",
-                        "message_key": "common.no_task_to_stop",
-                    }
-                )
+            await self._send_packet(
+                {
+                    "type": "info",
+                    "message": "No running task to stop.",
+                    "message_key": "common.no_task_to_stop",
+                }
             )
 
     async def _handle_resume(self) -> None:
-        self._pm.resume_from_human()
-        await self._ws.send_text(
-            json.dumps(
-                {
-                    "type": "info",
-                    "message": "Agent resumed execution.",
-                    "message_key": "common.agent_resumed",
-                }
-            )
+        self._pm.signal_resume(self._session_id)
+        await self._send_packet(
+            {
+                "type": "info",
+                "message": "Agent resumed execution.",
+                "message_key": "common.agent_resumed",
+            }
         )
 
     async def _handle_takeover(self) -> None:
         if self._pm.in_takeover:
-            await self._ws.send_text(
-                json.dumps(
-                    {
-                        "type": "info",
-                        "message": "Takeover is already in progress.",
-                        "message_key": "common.takeover_already_active",
-                    }
-                )
+            await self._send_packet(
+                {
+                    "type": "info",
+                    "message": "Takeover is already in progress.",
+                    "message_key": "common.takeover_already_active",
+                }
             )
             return
 
-        self._pm.request_pause()
+        self._pm.set_current_session(self._session_id)
+        self._pm.request_pause(self._session_id)
 
         async def do_takeover() -> None:
             # Capture current URL and initial screenshot before handing over.
@@ -346,20 +361,18 @@ class WebAdapter(PlatformAdapter):
                 self._session_id
             )
 
-            await self._ws.send_text(
-                json.dumps(
-                    {
-                        "type": "takeover_started",
-                        "message": "Browser embedded for manual interaction.",
-                        "message_key": "common.takeover_started",
-                        "url": current_url,
-                        "image": initial_screenshot,
-                        "viewport": {
-                            "width": self._pm.viewport_width,
-                            "height": self._pm.viewport_height,
-                        },
-                    }
-                )
+            await self._send_packet(
+                {
+                    "type": "takeover_started",
+                    "message": "Browser embedded for manual interaction.",
+                    "message_key": "common.takeover_started",
+                    "url": current_url,
+                    "image": initial_screenshot,
+                    "viewport": {
+                        "width": self._pm.viewport_width,
+                        "height": self._pm.viewport_height,
+                    },
+                }
             )
             self._append_message(
                 "assistant",
@@ -372,14 +385,13 @@ class WebAdapter(PlatformAdapter):
             # Stream screenshots to the frontend.
             async def send_frame(screenshot_b64: str, url: str) -> None:
                 try:
-                    await self._ws.send_text(
-                        json.dumps(
-                            {
-                                "type": "takeover_frame",
-                                "image": screenshot_b64,
-                                "url": url,
-                            }
-                        )
+                    await self._send_packet(
+                        {
+                            "type": "takeover_frame",
+                            "image": screenshot_b64,
+                            "url": url,
+                        },
+                        buffer_on_disconnect=False,
                     )
                 except Exception as e:
                     logger.warning("Takeover frame send error: %s", e)
@@ -391,43 +403,42 @@ class WebAdapter(PlatformAdapter):
             # Block until the user signals "done".
             await done_event.wait()
 
-            # Stop streaming and clean up takeover state.
-            self._pm.end_embedded_takeover()
-
-            # Collect final state.
-            final_url: str = "about:blank"
-            final_screenshot: str = ""
             try:
-                page = (
-                    self._pm.tab_manager.get_active_page(self._session_id)
-                    if self._pm.tab_manager
-                    else None
-                )
-                if page and not page.is_closed():
-                    final_url = page.url
-                    final_screenshot = await self._pm.get_page_screenshot_base64(
-                        self._session_id
+                # Collect final state.
+                final_url: str = "about:blank"
+                final_screenshot: str = ""
+                try:
+                    page = (
+                        self._pm.tab_manager.get_active_page(self._session_id)
+                        if self._pm.tab_manager
+                        else None
                     )
-            except Exception:
-                pass
+                    if page and not page.is_closed():
+                        final_url = page.url
+                        final_screenshot = await self._pm.get_page_screenshot_base64(
+                            self._session_id
+                        )
+                except Exception:
+                    pass
 
-            ended_payload: dict = {
-                "type": "takeover_ended",
-                "message": "Takeover ended. AI is resuming.",
-                "message_key": "common.takeover_ended",
-                "final_url": final_url,
-            }
-            if final_screenshot:
-                ended_payload["image"] = final_screenshot
-            await self._ws.send_text(json.dumps(ended_payload))
-            if final_screenshot:
-                self._append_message(
-                    "assistant",
-                    f"[Takeover Ended] Resumed at: {final_url}",
-                    image_data=final_screenshot,
-                )
-
-            self._pm.resume_from_human()
+                ended_payload: dict = {
+                    "type": "takeover_ended",
+                    "message": "Takeover ended. AI is resuming.",
+                    "message_key": "common.takeover_ended",
+                    "final_url": final_url,
+                }
+                if final_screenshot:
+                    ended_payload["image"] = final_screenshot
+                await self._send_packet(ended_payload)
+                if final_screenshot:
+                    self._append_message(
+                        "assistant",
+                        f"[Takeover Ended] Resumed at: {final_url}",
+                        image_data=final_screenshot,
+                    )
+            finally:
+                self._pm.end_embedded_takeover()
+                self._pm.signal_resume(self._session_id)
 
         asyncio.create_task(do_takeover())
 
@@ -484,14 +495,12 @@ class WebAdapter(PlatformAdapter):
                     "files": user_files,
                 }
             )
-            await self._ws.send_text(
-                json.dumps(
-                    {
-                        "type": "info",
-                        "message": "Message queued (agent is busy).",
-                        "message_key": "common.message_queued",
-                    }
-                )
+            await self._send_packet(
+                {
+                    "type": "info",
+                    "message": "Message queued (agent is busy).",
+                    "message_key": "common.message_queued",
+                }
             )
             return
 
@@ -567,10 +576,7 @@ class WebAdapter(PlatformAdapter):
                 packet = {"type": "info", "message": human_text}
                 self._append_message("assistant", human_text)
 
-            if self._ws.client_state.name == "CONNECTED":
-                await self._ws.send_text(json.dumps(packet))
-            else:
-                task_manager.buffer_message(self._session_id, packet)
+            await self._send_packet(packet)
 
         _web_running.add(self._session_id)
 
@@ -595,6 +601,7 @@ class WebAdapter(PlatformAdapter):
             finally:
                 _web_running.discard(self._session_id)
                 _web_queues.pop(self._session_id, None)
+                self._pm.deactivate_tab(self._session_id)
 
         await task_manager.start_task(
             self._session_id,
