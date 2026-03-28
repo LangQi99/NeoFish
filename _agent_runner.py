@@ -109,10 +109,16 @@ def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path
             except Exception as e:
                 logger.error("Failed to process attachment %s: %s", filename, e)
 
-        # If agent is already running for this session, queue the message
+        # If agent is already running for this session, queue the message.
+        # If it is blocked waiting for human intervention, also signal resume.
         if session_store.is_running(session_id):
             logger.info("Agent running for session %s, queuing message", session_id)
             await session_store.enqueue_message(session_id, unified_msg.text, images)
+            if pm.is_waiting_for_human(session_id):
+                logger.info(
+                    "Session %s is waiting for human — signalling resume", session_id
+                )
+                pm.signal_resume(session_id)
             return
 
         # Mark session as running

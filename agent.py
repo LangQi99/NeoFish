@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import logging
 import time
 import re
 from pathlib import Path
@@ -10,6 +11,8 @@ from playwright_manager import PlaywrightManager
 from workspace_manager import WorkspaceManager
 from task_manager import task_manager
 from background_manager import background_manager
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -776,7 +779,7 @@ async def run_agent_loop(
                     }
                 )
             except Exception as e:
-                print(f"Failed to parse image data-URL: {e}")
+                logger.warning("Failed to parse image data-URL: %s", e)
 
     for step in range(max_steps):
         if cancel_event and cancel_event.is_set():

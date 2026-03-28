@@ -1,9 +1,12 @@
 import re
 import asyncio
 import base64
+import logging
 from pathlib import Path
 from typing import Optional, Callable, Awaitable
 from playwright.async_api import async_playwright, BrowserContext, Page, Locator
+
+logger = logging.getLogger(__name__)
 
 from tab_manager import TabManager, DEFAULT_MAX_TABS, DEFAULT_TAB_TTL
 
@@ -224,12 +227,12 @@ class PlaywrightManager:
         screenshot_b64 = await self.get_page_screenshot_base64(session_id)
         await callback(reason, screenshot_b64)
 
-        print(f"Agent blocked. Reason: {reason}. Waiting for human signal…")
+        logger.info("Agent blocked. Reason: %s. Waiting for human signal…", reason)
         if effective_session:
             await self._pause_events[effective_session].wait()
         else:
             await self.human_intervention_event.wait()
-        print("Human signal received. Agent resuming…")
+        logger.info("Human signal received. Agent resuming…")
 
     def resume_from_human(self):
         self.human_intervention_event.set()
@@ -253,6 +256,11 @@ class PlaywrightManager:
     def signal_resume(self, session_id: str):
         if session_id in self._pause_events:
             self._pause_events[session_id].set()
+
+    def is_waiting_for_human(self, session_id: str) -> bool:
+        """Return True if the agent for *session_id* is blocked waiting for human intervention."""
+        event = self._pause_events.get(session_id)
+        return event is not None and not event.is_set()
 
     @property
     def in_takeover(self) -> bool:
@@ -311,7 +319,7 @@ class PlaywrightManager:
             try:
                 await takeover_page.goto(current_url, timeout=15000)
             except Exception as e:
-                print(f"Takeover: could not navigate to {current_url}: {e}")
+                logger.warning("Takeover: could not navigate to %s: %s", current_url, e)
 
         captured_url: list[str] = [current_url]
 
@@ -382,7 +390,7 @@ class PlaywrightManager:
                 await page.goto(final_url, timeout=15000)
                 await asyncio.sleep(1)
             except Exception as e:
-                print(f"end_takeover: could not navigate to {final_url}: {e}")
+                logger.warning("end_takeover: could not navigate to %s: %s", final_url, e)
 
         return final_url
 
@@ -411,7 +419,7 @@ class PlaywrightManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"Takeover stream error: {e}")
+                logger.error("Takeover stream error: %s", e)
             await asyncio.sleep(interval)
 
     def stop_takeover_stream(self) -> None:
@@ -473,7 +481,7 @@ class PlaywrightManager:
             try:
                 await page.goto(url, timeout=15000)
             except Exception as e:
-                print(f"Takeover navigate error: {e}")
+                logger.warning("Takeover navigate error: %s", e)
 
     def get_tab_stats(self) -> dict:
         if self.tab_manager:
