@@ -7,17 +7,21 @@ import MainInput from './components/MainInput.vue'
 import BrowserView from './components/BrowserView.vue'
 import ThinkingChain from './components/ThinkingChain.vue'
 import TaskSidebar from './components/TaskSidebar.vue'
+import KnowledgeWorkspace from './components/KnowledgeWorkspace.vue'
 import { useChatHistory } from './composables/useChatHistory'
 import { useTasks } from './composables/useTasks'
 import { useDebugMode } from './composables/useDebugMode'
 import { useThemeMode } from './composables/useThemeMode'
+import { useKnowledge } from './composables/useKnowledge'
 import { extractSessionPreview } from './utils/sessionPreview'
 
 const { t } = useI18n()
 const { sessions, activeChatId, loadSessions, createNewChat, refreshSession } = useChatHistory()
 const { tasks, loadTasks, isLoading: tasksLoading } = useTasks()
+const { loadFolderFiles } = useKnowledge()
 const { debugMode } = useDebugMode()
 useThemeMode()
+const mainView = ref<'chat' | 'knowledge'>('chat')
 
 // ─── WebSocket ─────────────────────────────────────────────────────────────
 const ws = ref<WebSocket | null>(null)
@@ -311,6 +315,7 @@ function pushMessage(data: any) {
 const { loadMessages } = useChatHistory()
 
 async function switchToSession(id: string) {
+  mainView.value = 'chat'
   activeChatId.value = id
   messages.value = []
   hasStarted.value = false
@@ -365,6 +370,7 @@ async function switchToSession(id: string) {
 
 // ─── New chat ──────────────────────────────────────────────────────────────
 async function handleNewChat() {
+  mainView.value = 'chat'
   // createNewChat already called in Sidebar → we just switch to the new active session
   messages.value = []
   hasStarted.value = false
@@ -447,6 +453,11 @@ function onBrowserNavigate(payload: { url: string }) {
   ws.value?.send(JSON.stringify({ type: 'takeover_navigate', url: payload.url }))
 }
 
+async function openKnowledgeWorkspace(folderId: string) {
+  mainView.value = 'knowledge'
+  await loadFolderFiles(folderId)
+}
+
 // ─── Lifecycle ─────────────────────────────────────────────────────────────
 onMounted(async () => {
   await loadTasks()
@@ -478,6 +489,7 @@ onUnmounted(() => {
     <Sidebar
       @new-chat="handleNewChat"
       @select-chat="switchToSession"
+      @open-knowledge-workspace="openKnowledgeWorkspace"
     />
     
     <main class="relative flex h-full min-w-0 flex-1 flex-col">
@@ -502,7 +514,7 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <div class="pointer-events-none absolute bottom-6 right-0 top-24 z-20 hidden min-[1280px]:block">
+      <div v-if="mainView === 'chat'" class="pointer-events-none absolute bottom-6 right-0 top-24 z-20 hidden min-[1280px]:block">
         <div class="pointer-events-auto h-full">
           <TaskSidebar
             :tasks="tasks"
@@ -510,8 +522,10 @@ onUnmounted(() => {
           />
         </div>
       </div>
-      
-      <div v-if="!hasStarted" class="flex-1 overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] opacity-100 translate-y-0">
+
+      <KnowledgeWorkspace v-if="mainView === 'knowledge'" />
+
+      <div v-else-if="!hasStarted" class="flex-1 overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] opacity-100 translate-y-0">
         <MainInput @submit="handleUserSubmit" />
       </div>
 
