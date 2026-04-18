@@ -11,6 +11,8 @@ from playwright_manager import PlaywrightManager
 from workspace_manager import WorkspaceManager
 from task_manager import task_manager
 from background_manager import background_manager
+from message_center import MessageCenter
+from tool_registry import ToolExecutionResult, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +404,42 @@ TOOLS = [
 ]
 
 
+def _get_block_type(block) -> str:
+    if isinstance(block, dict):
+        return block.get("type", "")
+    return getattr(block, "type", "")
+
+
+def _get_block_text(block) -> str:
+    if isinstance(block, dict):
+        return block.get("text", "")
+    return getattr(block, "text", "")
+
+
+def _extract_tool_use(block) -> tuple[str, str, dict]:
+    if isinstance(block, dict):
+        return (
+            str(block.get("id", "")),
+            str(block.get("name", "")),
+            block.get("input", {}) or {},
+        )
+    return (
+        str(getattr(block, "id", "")),
+        str(getattr(block, "name", "")),
+        getattr(block, "input", {}) or {},
+    )
+
+
+def _extract_text_parts(blocks: list) -> list[str]:
+    text_parts: list[str] = []
+    for block in blocks:
+        if _get_block_type(block) == "text":
+            text = _get_block_text(block)
+            if text:
+                text_parts.append(text)
+    return text_parts
+
+
 # ============== Context Compression Functions ==============
 
 
@@ -519,11 +557,7 @@ async def auto_compact(messages: list, focus: str = None) -> list:
             max_tokens=2000,
             messages=[{"role": "user", "content": summary_prompt}],
         )
-        # Extract text from response, handling ThinkingBlock etc.
-        text_parts = []
-        for block in response.content:
-            if hasattr(block, "text") and block.type == "text":
-                text_parts.append(block.text)
+        text_parts = _extract_text_parts(response.content)
         summary = "\n".join(text_parts) if text_parts else "No summary generated."
     except Exception as e:
         summary = f"Error generating summary: {str(e)}"
@@ -669,16 +703,220 @@ def _auto_create_root_task(
     return task
 
 
+def _normalize_info_payload(msg) -> dict:
+    if isinstance(msg, dict):
+        return msg
+    return {"message": str(msg)}
+
+
+def _create_tool_registry(
+    *,
+    pm: PlaywrightManager,
+    page,
+    effective_session_id: str,
+    auto_root_task: dict | None,
+    emit_info,
+    emit_action_required,
+    emit_image,
+    emit_file,
+) -> ToolRegistry:
+    registry = ToolRegistry()
+
+    async def _snapshot(args: dict) -> ToolExecutionResult:
+        snapshot_text = await pm.get_aria_snapshot(effective_session_id)
+        return ToolExecutionResult(
+            output=snapshot_text if snapshot_text else "Could not capture aria snapshot."
+        )
+
+    async def _navigate(args: dict) -> ToolExecutionResult:
+        if not page:
+            raise RuntimeError("No active page")
+        await page.goto(args["url"])
+        await asyncio.sleep(2)
+        return ToolExecutionResult(output="Successfully navigated.")
+
+    async def _click(args: dict) -> ToolExecutionResult:
+        if not page:
+            raise RuntimeError("No active page")
+        ref = args.get("ref")
+        selector = args.get("selector")
+        if ref:
+            locator = await pm.locate_by_ref(ref, effective_session_id)
+            await locator.click(timeout=5000)
+        elif selector:
+            await page.click(selector, timeout=5000)
+        else:
+            raise ValueError("click requires either 'ref' or 'selector'")
+        await asyncio.sleep(1)
+        return ToolExecutionResult(output="Successfully clicked.")
+
+    async def _type_text(args: dict) -> ToolExecutionResult:
+        if not page:
+            raise RuntimeError("No active page")
+        ref = args.get("ref")
+        selector = args.get("selector")
+        if ref:
+            locator = await pm.locate_by_ref(ref, effective_session_id)
+            await locator.fill(args["text"])
+        elif selector:
+            await page.fill(selector, args["text"])
+        else:
+            raise ValueError("type_text requires either 'ref' or 'selector'")
+        return ToolExecutionResult(output="Successfully typed text.")
+
+    async def _scroll(args: dict) -> ToolExecutionResult:
+        if not page:
+            raise RuntimeError("No active page")
+        direction = args.get("direction", "down")
+        if direction == "down":
+            await page.mouse.wheel(0, 1000)
+        else:
+            await page.mouse.wheel(0, -1000)
+        await asyncio.sleep(1)
+        return ToolExecutionResult(output="Scrolled.")
+
+    async def _request_human_assistance(args: dict) -> ToolExecutionResult:
+        reason = args.get("reason", "Login required.")
+        await pm.block_for_human(emit_action_required, reason, effective_session_id)
+        return ToolExecutionResult(
+            output=(
+                "Human has processed the request. Page might have updated. "
+                "You may resume your task."
+            )
+        )
+
+    async def _extract_info(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(output=f"Extracted: {args['info_summary']}")
+
+    async def _send_screenshot(args: dict) -> ToolExecutionResult:
+        description = args.get("description", "Current page screenshot")
+        screenshot_b64 = await pm.get_page_screenshot_base64(effective_session_id)
+        if screenshot_b64:
+            await emit_image(description, screenshot_b64)
+            return ToolExecutionResult(output=f"Screenshot sent to user: {description}")
+        return ToolExecutionResult(output="Failed to capture screenshot.")
+
+    async def _finish_task(args: dict) -> ToolExecutionResult:
+        report = args.get("report", "Task completed.")
+        if auto_root_task:
+            task_manager.update(auto_root_task["id"], status="completed")
+        await emit_info(
+            {
+                "message": f"✅ **Task Completed**:\n\n{report}",
+                "message_key": "common.task_completed",
+                "params": {"report": report},
+            }
+        )
+        return ToolExecutionResult(output="Finished.", finished=True)
+
+    async def _read_file(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=await workspace.read_file(args["path"], args.get("limit"))
+        )
+
+    async def _write_file(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=await workspace.write_file(args["path"], args["content"])
+        )
+
+    async def _edit_file(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=await workspace.edit_file(args["path"], args["old_text"], args["new_text"])
+        )
+
+    async def _send_file(args: dict) -> ToolExecutionResult:
+        file_path = args["path"]
+        description = args.get("description", f"File: {file_path}")
+        full_path = WORKDIR / file_path
+        if not full_path.exists():
+            return ToolExecutionResult(output=f"Error: File not found: {file_path}")
+        if not str(full_path.resolve()).startswith(str(WORKDIR.resolve())):
+            return ToolExecutionResult(output=f"Error: Path escapes workspace: {file_path}")
+        await emit_file(file_path, description)
+        return ToolExecutionResult(output=f"File sent: {file_path}")
+
+    async def _run_bash(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=await workspace.run_bash(args["command"], args.get("timeout", 120))
+        )
+
+    async def _task_create(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=task_manager.create(args["subject"], args.get("description", ""))
+        )
+
+    async def _task_get(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(output=task_manager.get(args["task_id"]))
+
+    async def _task_update(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=task_manager.update(
+                args["task_id"],
+                args.get("status"),
+                args.get("addBlockedBy"),
+                args.get("addBlocks"),
+            )
+        )
+
+    async def _task_list(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(output=task_manager.list_all())
+
+    async def _background_run(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=await background_manager.run(
+                args["command"], args.get("timeout"), effective_session_id
+            )
+        )
+
+    async def _check_background(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=await background_manager.check(args.get("task_id"))
+        )
+
+    async def _compact(args: dict) -> ToolExecutionResult:
+        focus = args.get("focus")
+        return ToolExecutionResult(
+            output=f"Manual compression requested{': ' + focus if focus else ''}.",
+            manual_compact=True,
+            compact_focus=focus,
+        )
+
+    registry.register("snapshot", _snapshot)
+    registry.register("navigate", _navigate)
+    registry.register("click", _click)
+    registry.register("type_text", _type_text)
+    registry.register("scroll", _scroll)
+    registry.register("request_human_assistance", _request_human_assistance)
+    registry.register("extract_info", _extract_info)
+    registry.register("send_screenshot", _send_screenshot)
+    registry.register("finish_task", _finish_task)
+    registry.register("read_file", _read_file)
+    registry.register("write_file", _write_file)
+    registry.register("edit_file", _edit_file)
+    registry.register("send_file", _send_file)
+    registry.register("run_bash", _run_bash)
+    registry.register("task_create", _task_create)
+    registry.register("task_get", _task_get)
+    registry.register("task_update", _task_update)
+    registry.register("task_list", _task_list)
+    registry.register("background_run", _background_run)
+    registry.register("check_background", _check_background)
+    registry.register("compact", _compact)
+
+    return registry
+
+
 # ============== Main Agent Loop ==============
 
 
 async def run_agent_loop(
     pm: PlaywrightManager,
     user_instruction: str,
-    ws_send_msg,
-    ws_request_action,
-    ws_send_image,
-    ws_send_file,
+    ws_send_msg=None,
+    ws_request_action=None,
+    ws_send_image=None,
+    ws_send_file=None,
+    message_center: MessageCenter | None = None,
     images: list = [],
     history_messages: list = [],
     uploaded_files: list = [],
@@ -689,8 +927,43 @@ async def run_agent_loop(
     cancel_event: asyncio.Event = None,
 ):
     effective_session_id = web_session_id or session_id
+
+    async def emit_info(msg) -> None:
+        payload = _normalize_info_payload(msg)
+        if message_center:
+            await message_center.publish("info", payload)
+            return
+        if ws_send_msg:
+            await ws_send_msg(payload)
+
+    async def emit_action_required(reason: str, image: str | None = None) -> None:
+        payload = {"reason": reason}
+        if image:
+            payload["image"] = image
+        if message_center:
+            await message_center.publish("action_required", payload)
+            return
+        if ws_request_action:
+            await ws_request_action(reason, image)
+
+    async def emit_image(description: str, image_b64: str) -> None:
+        payload = {"description": description, "image": image_b64}
+        if message_center:
+            await message_center.publish("image", payload)
+            return
+        if ws_send_image:
+            await ws_send_image(description, image_b64)
+
+    async def emit_file(file_path: str, description: str) -> None:
+        payload = {"path": file_path, "description": description}
+        if message_center:
+            await message_center.publish("send_file", payload)
+            return
+        if ws_send_file:
+            await ws_send_file(file_path, description)
+
     if not effective_session_id:
-        await ws_send_msg(
+        await emit_info(
             {"message": "Error: No session ID provided", "message_key": "common.error"}
         )
         return
@@ -698,7 +971,7 @@ async def run_agent_loop(
     try:
         page = await pm.get_or_create_page(effective_session_id)
     except Exception as e:
-        await ws_send_msg(
+        await emit_info(
             {
                 "message": f"Error creating browser tab: {e}",
                 "message_key": "common.error",
@@ -708,7 +981,7 @@ async def run_agent_loop(
 
     auto_root_task = _auto_create_root_task(user_instruction, images, uploaded_files)
 
-    await ws_send_msg(
+    await emit_info(
         {
             "message": f"Agent starting task: {user_instruction}",
             "message_key": "common.agent_starting",
@@ -785,7 +1058,7 @@ async def run_agent_loop(
         if cancel_event and cancel_event.is_set():
             if auto_root_task:
                 task_manager.update(auto_root_task["id"], status="pending")
-            await ws_send_msg(
+            await emit_info(
                 {
                     "message": "Task cancelled by user.",
                     "message_key": "common.task_cancelled",
@@ -794,7 +1067,7 @@ async def run_agent_loop(
             break
 
         if pm.check_and_clear_pause_request(effective_session_id):
-            await ws_send_msg(
+            await emit_info(
                 {
                     "message": "Agent paused for manual takeover. Waiting for you to finish…",
                     "message_key": "common.agent_paused_for_takeover",
@@ -850,7 +1123,7 @@ async def run_agent_loop(
 
         # === NEW: Auto-compact check (Layer 2) ===
         if estimate_tokens(messages) > TOKEN_THRESHOLD:
-            await ws_send_msg(
+            await emit_info(
                 {
                     "message": "Context threshold reached, compressing...",
                     "message_key": "common.context_compressing",
@@ -894,7 +1167,7 @@ async def run_agent_loop(
         messages.append({"role": "user", "content": user_content})
 
         # 2. Think
-        await ws_send_msg(
+        await emit_info(
             {"message": "Agent is thinking...", "message_key": "common.agent_thinking"}
         )
 
@@ -906,6 +1179,7 @@ async def run_agent_loop(
                 messages=messages,
                 tools=TOOLS,
             )
+            assistant_blocks = response.content
         except Exception as e:
             err_text = str(e)
             if "image_url" in err_text or "validation errors for ValidatorIterator" in err_text:
@@ -914,7 +1188,7 @@ async def run_agent_loop(
                     if not (isinstance(block, dict) and block.get("type") == "image")
                 ]
                 messages[-1] = {"role": "user", "content": user_content}
-                await ws_send_msg(
+                await emit_info(
                     {
                         "message": "当前模型网关不接受图片输入，已自动切换为纯文本模式继续执行。",
                         "message_key": "common.image_input_disabled",
@@ -928,35 +1202,46 @@ async def run_agent_loop(
                         messages=messages,
                         tools=TOOLS,
                     )
+                    assistant_blocks = response.content
                 except Exception as retry_error:
-                    await ws_send_msg(f"Error calling LLM: {str(retry_error)}")
+                    await emit_info(f"Error calling LLM: {str(retry_error)}")
                     break
             else:
-                await ws_send_msg(f"Error calling LLM: {err_text}")
+                await emit_info(f"Error calling LLM: {err_text}")
                 break
 
-        messages.append({"role": "assistant", "content": response.content})
+        messages.append({"role": "assistant", "content": assistant_blocks})
 
         # 3. Act
-        tool_uses = [block for block in response.content if block.type == "tool_use"]
+        tool_uses = [block for block in assistant_blocks if _get_block_type(block) == "tool_use"]
         user_content = []
 
         if not tool_uses:
-            text_blocks = [b.text for b in response.content if b.type == "text"]
+            text_blocks = _extract_text_parts(assistant_blocks)
             if text_blocks:
                 msg = "\n".join(text_blocks)
-                await ws_send_msg(msg)
+                await emit_info(msg)
                 break
             continue
 
         manual_compact = False
+        manual_compact_focus = None
+        tool_registry = _create_tool_registry(
+            pm=pm,
+            page=page,
+            effective_session_id=effective_session_id,
+            auto_root_task=auto_root_task,
+            emit_info=emit_info,
+            emit_action_required=emit_action_required,
+            emit_image=emit_image,
+            emit_file=emit_file,
+        )
 
         for tool in tool_uses:
-            tool_name = tool.name
-            args = tool.input
+            tool_id, tool_name, args = _extract_tool_use(tool)
             result_str = ""
 
-            await ws_send_msg(
+            await emit_info(
                 {
                     "message": f"Executing action: `{tool_name}` with args: {json.dumps(args, ensure_ascii=False)}",
                     "message_key": "common.executing_action",
@@ -968,188 +1253,30 @@ async def run_agent_loop(
             )
 
             try:
-                if tool_name == "snapshot":
-                    snapshot_text = await pm.get_aria_snapshot(effective_session_id)
-                    result_str = (
-                        snapshot_text
-                        if snapshot_text
-                        else "Could not capture aria snapshot."
-                    )
-
-                elif tool_name == "navigate":
-                    await page.goto(args["url"])
-                    await asyncio.sleep(2)
-                    result_str = "Successfully navigated."
-
-                elif tool_name == "click":
-                    ref = args.get("ref")
-                    selector = args.get("selector")
-                    if ref:
-                        locator = await pm.locate_by_ref(ref, effective_session_id)
-                        await locator.click(timeout=5000)
-                    elif selector:
-                        await page.click(selector, timeout=5000)
-                    else:
-                        raise ValueError("click requires either 'ref' or 'selector'")
-                    await asyncio.sleep(1)
-                    result_str = "Successfully clicked."
-
-                elif tool_name == "type_text":
-                    ref = args.get("ref")
-                    selector = args.get("selector")
-                    if ref:
-                        locator = await pm.locate_by_ref(ref, effective_session_id)
-                        await locator.fill(args["text"])
-                    elif selector:
-                        await page.fill(selector, args["text"])
-                    else:
-                        raise ValueError(
-                            "type_text requires either 'ref' or 'selector'"
-                        )
-                    result_str = "Successfully typed text."
-
-                elif tool_name == "scroll":
-                    direction = args.get("direction", "down")
-                    if direction == "down":
-                        await page.mouse.wheel(0, 1000)
-                    else:
-                        await page.mouse.wheel(0, -1000)
-                    await asyncio.sleep(1)
-                    result_str = "Scrolled."
-
-                elif tool_name == "request_human_assistance":
-                    reason = args.get("reason", "Login required.")
-                    await pm.block_for_human(
-                        ws_request_action, reason, effective_session_id
-                    )
-                    result_str = "Human has processed the request. Page might have updated. You may resume your task."
-
-                elif tool_name == "extract_info":
-                    result_str = f"Extracted: {args['info_summary']}"
-
-                elif tool_name == "send_screenshot":
-                    description = args.get("description", "Current page screenshot")
-                    screenshot_b64 = await pm.get_page_screenshot_base64(
-                        effective_session_id
-                    )
-                    if screenshot_b64:
-                        await ws_send_image(description, screenshot_b64)
-                        result_str = f"Screenshot sent to user: {description}"
-                    else:
-                        result_str = "Failed to capture screenshot."
-
-                elif tool_name == "finish_task":
-                    report = args.get("report", "Task completed.")
-                    if auto_root_task:
-                        task_manager.update(auto_root_task["id"], status="completed")
-                    await ws_send_msg(
-                        {
-                            "message": f"✅ **Task Completed**:\n\n{report}",
-                            "message_key": "common.task_completed",
-                            "params": {"report": report},
-                        }
-                    )
-                    result_str = "Finished."
+                execution = await tool_registry.execute(tool_name, args)
+                result_str = execution.output
+                if execution.finished:
                     is_finished = True
-
-                # File operation tools
-                elif tool_name == "read_file":
-                    result_str = await workspace.read_file(
-                        args["path"], args.get("limit")
-                    )
-
-                elif tool_name == "write_file":
-                    result_str = await workspace.write_file(
-                        args["path"], args["content"]
-                    )
-
-                elif tool_name == "edit_file":
-                    result_str = await workspace.edit_file(
-                        args["path"], args["old_text"], args["new_text"]
-                    )
-
-                elif tool_name == "send_file":
-                    file_path = args["path"]
-                    description = args.get("description", f"File: {file_path}")
-                    # Resolve path relative to workspace
-                    full_path = WORKDIR / file_path
-                    if not full_path.exists():
-                        result_str = f"Error: File not found: {file_path}"
-                    elif not str(full_path.resolve()).startswith(
-                        str(WORKDIR.resolve())
-                    ):
-                        result_str = f"Error: Path escapes workspace: {file_path}"
-                    else:
-                        await ws_send_file(file_path, description)
-                        result_str = f"File sent: {file_path}"
-
-                elif tool_name == "run_bash":
-                    result_str = await workspace.run_bash(
-                        args["command"], args.get("timeout", 120)
-                    )
-
-                # Task management tools
-                elif tool_name == "task_create":
-                    result_str = task_manager.create(
-                        args["subject"], args.get("description", "")
-                    )
-
-                elif tool_name == "task_get":
-                    result_str = task_manager.get(args["task_id"])
-
-                elif tool_name == "task_update":
-                    result_str = task_manager.update(
-                        args["task_id"],
-                        args.get("status"),
-                        args.get("addBlockedBy"),
-                        args.get("addBlocks"),
-                    )
-
-                elif tool_name == "task_list":
-                    result_str = task_manager.list_all()
-
-                # Background task tools
-                elif tool_name == "background_run":
-                    result_str = await background_manager.run(
-                        args["command"],
-                        args.get("timeout"),
-                        effective_session_id,
-                    )
-
-                elif tool_name == "check_background":
-                    result_str = await background_manager.check(args.get("task_id"))
-
-                # Context compression
-                elif tool_name == "compact":
+                if execution.manual_compact:
                     manual_compact = True
-                    focus = args.get("focus")
-                    result_str = (
-                        f"Manual compression requested{': ' + focus if focus else ''}."
-                    )
-
-                else:
-                    result_str = f"Unknown tool: {tool_name}"
+                    manual_compact_focus = execution.compact_focus
 
             except Exception as e:
                 result_str = f"Error executing {tool_name}: {str(e)}"
 
             user_content.append(
-                {"type": "tool_result", "tool_use_id": tool.id, "content": result_str}
+                {"type": "tool_result", "tool_use_id": tool_id, "content": result_str}
             )
 
         # === NEW: Handle manual compact (Layer 3) ===
         if manual_compact:
-            await ws_send_msg(
+            await emit_info(
                 {
                     "message": "Manual compression triggered...",
                     "message_key": "common.manual_compressing",
                 }
             )
-            focus = None
-            for tool in tool_uses:
-                if tool.name == "compact" and tool.input.get("focus"):
-                    focus = tool.input["focus"]
-            messages[:] = await auto_compact(messages, focus)
+            messages[:] = await auto_compact(messages, manual_compact_focus)
             # Reset user_content after compression
             user_content = []
 
@@ -1159,7 +1286,7 @@ async def run_agent_loop(
     if not is_finished:
         if auto_root_task:
             task_manager.update(auto_root_task["id"], status="pending")
-        await ws_send_msg(
+        await emit_info(
             {
                 "message": "⚠️ Task reached maximum steps without calling finish_task.",
                 "message_key": "common.max_steps_error",

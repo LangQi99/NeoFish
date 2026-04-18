@@ -12,6 +12,7 @@ from message import UnifiedMessage
 from platforms.base import PlatformAdapter
 from agent_task_manager import task_manager
 from background_manager import background_manager
+from message_center import BusEvent, MessageCenter
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +94,13 @@ class WebAdapter(PlatformAdapter):
         self._workspace_dir = uploads_dir.parent
         self._pm = playwright_manager
         self._run_agent = run_agent
+        self._message_center = MessageCenter(session_id)
+        self._bus_handler = self._handle_bus_event
 
     # ── PlatformAdapter interface ─────────────────────────────────────────────
 
     async def start(self) -> None:
+        await self._message_center.bus.subscribe(self._session_id, self._bus_handler)
         await self._ws.send_text(
             json.dumps(
                 {
@@ -123,8 +127,73 @@ class WebAdapter(PlatformAdapter):
             await self._ws.send_text(json.dumps(msg_data["message"]))
 
     async def stop(self) -> None:
+        await self._message_center.bus.unsubscribe(self._session_id, self._bus_handler)
         if not task_manager.has_running_task(self._session_id):
             self._pm.deactivate_tab(self._session_id)
+
+    async def _handle_bus_event(self, event: BusEvent) -> None:
+        payload = event.payload or {}
+        event_type = event.event_type
+
+        if event_type == "info":
+            packet = {"type": "info", **payload}
+            await self._send_packet(packet)
+            self._append_message(
+                "assistant",
+                payload.get("message", ""),
+                message_key=payload.get("message_key", ""),
+                params=payload.get("params"),
+            )
+            return
+
+        if event_type == "action_required":
+            packet = {
+                "type": "action_required",
+                "reason": payload.get("reason", ""),
+            }
+            if payload.get("image"):
+                packet["image"] = payload["image"]
+            await self._send_packet(packet)
+            self._append_message(
+                "assistant",
+                f"[Action Required] {payload.get('reason', '')}",
+                image_data=payload.get("image", "") or "",
+            )
+            return
+
+        if event_type == "image":
+            await self._send_packet(
+                {
+                    "type": "image",
+                    "description": payload.get("description", ""),
+                    "image": payload.get("image", ""),
+                }
+            )
+            self._append_message(
+                "assistant",
+                f"[Image] {payload.get('description', '')}",
+                image_data=payload.get("image", "") or "",
+            )
+            return
+
+        if event_type == "send_file":
+            await self.send_file(
+                self._session_id,
+                payload.get("path", ""),
+                payload.get("description", ""),
+            )
+            return
+
+        if event_type == "background_task_update":
+            text = payload.get("message")
+            if not text:
+                text = (
+                    f"[bg:{payload.get('task_id', '')}] {payload.get('status', '')}: "
+                    f"{payload.get('command', '')}"
+                )
+            packet = {"type": "info", "message": text}
+            await self._send_packet(packet)
+            self._append_message("assistant", text)
 
     def _is_ws_connected(self) -> bool:
         client_state = getattr(self._ws, "client_state", None)
@@ -587,23 +656,6 @@ class WebAdapter(PlatformAdapter):
 
         history = self._build_history()
 
-        async def _ws_send_msg(msg) -> None:
-            if isinstance(msg, dict):
-                human_text = msg.get("message", "")
-                packet = {"type": "info", **msg}
-                self._append_message(
-                    "assistant",
-                    human_text,
-                    message_key=msg.get("message_key", ""),
-                    params=msg.get("params"),
-                )
-            else:
-                human_text = str(msg)
-                packet = {"type": "info", "message": human_text}
-                self._append_message("assistant", human_text)
-
-            await self._send_packet(packet)
-
         _web_running.add(self._session_id)
 
         async def _run_with_queue(cancel_event: asyncio.Event = None):
@@ -611,12 +663,13 @@ class WebAdapter(PlatformAdapter):
                 await self._run_agent(
                     self._pm,
                     user_msg,
-                    _ws_send_msg,
+                    None,
                     lambda reason, img: self.request_action(
                         self._session_id, reason, img
                     ),
                     self._send_image,
                     lambda path, desc: self.send_file(self._session_id, path, desc),
+                    message_center=self._message_center,
                     images=user_images,
                     history_messages=history,
                     uploaded_files=saved_paths,
