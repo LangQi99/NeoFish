@@ -22,6 +22,7 @@ import uuid
 from typing import Optional, Dict, List, Any
 from pathlib import Path
 import time
+from message_center import MessageCenter
 
 # Default timeout for background tasks
 BG_TASK_TIMEOUT = int(os.getenv("BG_TASK_TIMEOUT", "300"))  # 5 minutes default
@@ -192,6 +193,24 @@ class BackgroundManager:
                 "elapsed": time.time() - self.tasks[task_id].get("start_time", time.time()),
                 "session_id": session_id,
             })
+
+        if session_id:
+            center = MessageCenter(session_id)
+            await center.publish(
+                "background_task_update",
+                {
+                    "task_id": task_id,
+                    "status": status,
+                    "command": command[:80],
+                    "result": (output or "(no output)")[:500],
+                    "elapsed": time.time()
+                    - self.tasks[task_id].get("start_time", time.time()),
+                    "message": (
+                        f"[bg:{task_id}] {status} ({time.time() - self.tasks[task_id].get('start_time', time.time()):.1f}s): "
+                        f"{command[:50]}"
+                    ),
+                },
+            )
 
     async def check(self, task_id: Optional[str] = None) -> str:
         """
