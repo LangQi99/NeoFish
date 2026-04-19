@@ -79,25 +79,27 @@ class WebAdapter(PlatformAdapter):
         self,
         websocket: WebSocket,
         session_id: str,
-        sessions: dict,
-        save_sessions: Callable,
         uploads_dir: Path,
         playwright_manager,
         run_agent: Callable,
         session_memory=None,
         save_session_memory_fn=None,
+        append_message_fn=None,
+        update_session_fn=None,
+        load_history_fn=None,
     ) -> None:
         super().__init__()
         self._ws = websocket
         self._session_id = session_id
-        self._sessions = sessions
-        self._save_sessions = save_sessions
+        self._append_message_fn = append_message_fn
+        self._update_session_fn = update_session_fn
         self._uploads_dir = uploads_dir
         self._workspace_dir = uploads_dir.parent
         self._pm = playwright_manager
         self._run_agent = run_agent
         self._session_memory = session_memory
         self._save_session_memory_fn = save_session_memory_fn
+        self._load_history_fn = load_history_fn
         self._message_center = MessageCenter(session_id)
         self._bus_handler = self._handle_bus_event
 
@@ -306,10 +308,10 @@ class WebAdapter(PlatformAdapter):
             msg["message_key"] = message_key
         if params:
             msg["params"] = params
-        self._sessions[self._session_id]["messages"].append(msg)
-        if role == "user" and not self._sessions[self._session_id]["title"]:
-            self._sessions[self._session_id]["title"] = (content or "📷 Image")[:40]
-        self._save_sessions()
+        if self._append_message_fn:
+            self._append_message_fn(self._session_id, msg)
+        if role == "user" and self._update_session_fn:
+            pass
 
     async def _send_image(self, description: str, b64_image: str) -> None:
         """Send a screenshot / image frame to the frontend."""
@@ -325,9 +327,12 @@ class WebAdapter(PlatformAdapter):
 
     def _build_history(self) -> list:
         """Build the conversation history list for the agent (excludes last msg)."""
+        if self._load_history_fn:
+            all_messages = self._load_history_fn(self._session_id)
+        else:
+            return []
         history: list = []
-        messages = self._sessions[self._session_id]["messages"]
-        for m in messages[:-1]:
+        for m in all_messages[:-1]:
             role = m.get("role", "user")
             content = m.get("content", "")
             if role == "user":
@@ -659,14 +664,28 @@ class WebAdapter(PlatformAdapter):
             await self.on_message(unified)
 
         def _save_sm():
-            self._sessions[self._session_id]["session_memory"] = (
-                sm.to_compact_dict()
-                if hasattr(sm, "to_compact_dict")
-                else None
-            )
-            self._save_sessions()
+            if self._update_session_fn is None:
+                return
+            import orjson
+            meta_update = {"session_memory": sm.to_compact_dict() if hasattr(sm, "to_compact_dict") else None}
+            current_meta = {}
+            meta_path = Path("sessions") / self._session_id / "meta.json"
+            if meta_path.exists():
+                try:
+                    current_meta = orjson.loads(meta_path.read_bytes())
+                except Exception:
+                    pass
+            current_meta.update(meta_update)
+            self._update_session_fn(self._session_id, current_meta)
 
-        sm_data = self._sessions[self._session_id].get("session_memory")
+        sm_data = None
+        meta_path = Path("sessions") / self._session_id / "meta.json"
+        if meta_path.exists():
+            try:
+                import orjson
+                sm_data = orjson.loads(meta_path.read_bytes()).get("session_memory")
+            except Exception:
+                pass
         if sm_data:
             from memory.session_memory import SessionMemory
 

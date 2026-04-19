@@ -32,25 +32,160 @@ knowledge_service = KnowledgeService(WORKSPACE_DIR)
 
 # ─── Session Store ────────────────────────────────────────────────────────────
 
-SESSIONS_FILE = Path("sessions.json")
+SESSIONS_DIR = Path("sessions/")
+INDEX_FILE = SESSIONS_DIR / "index.json"
+
+_session_index: dict[str, dict] = {}
 
 
-def _load_sessions() -> dict:
-    if SESSIONS_FILE.exists():
+def _ensure_sessions_dir() -> None:
+    SESSIONS_DIR.mkdir(exist_ok=True)
+
+
+def _load_index() -> dict[str, dict]:
+    if INDEX_FILE.exists():
         try:
-            return json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
+            import orjson
+            return orjson.loads(INDEX_FILE.read_bytes())
         except Exception:
             pass
     return {}
 
 
-def _save_sessions():
-    SESSIONS_FILE.write_text(
-        json.dumps(sessions, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+def _save_index() -> None:
+    import orjson
+    INDEX_FILE.write_bytes(orjson.dumps(_session_index))
 
 
-sessions: dict = _load_sessions()  # {session_id: {title, created_at, messages: [...]}}
+def _session_dir(sid: str) -> Path:
+    return SESSIONS_DIR / sid
+
+
+def _load_session(sid: str) -> dict | None:
+    meta_path = _session_dir(sid) / "meta.json"
+    if not meta_path.exists():
+        return None
+    try:
+        import orjson
+        meta = orjson.loads(meta_path.read_bytes())
+    except Exception:
+        return None
+    msgs = _load_messages_jsonl(sid)
+    meta["messages"] = msgs
+    return meta
+
+
+def _load_messages_jsonl(sid: str) -> list:
+    path = _session_dir(sid) / "messages.jsonl"
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        import orjson as _orjson
+        return [_orjson.loads(line) for line in lines if line.strip()]
+    except Exception:
+        return []
+
+
+def _append_message_jsonl(sid: str, msg: dict) -> None:
+    import orjson as _orjson
+    path = _session_dir(sid) / "messages.jsonl"
+    with open(path, "ab") as f:
+        f.write(_orjson.dumps(msg))
+        f.write(b"\n")
+
+
+def _save_session_meta(sid: str, data: dict) -> None:
+    import orjson as _orjson
+    meta = {
+        "id": data["id"],
+        "title": data.get("title", ""),
+        "created_at": data.get("created_at", ""),
+        "session_memory": data.get("session_memory"),
+    }
+    meta_path = _session_dir(sid) / "meta.json"
+    meta_path.write_bytes(_orjson.dumps(meta))
+
+
+def _new_session(title: str = "") -> dict:
+    import uuid as _uuid
+    sid = str(_uuid.uuid4())
+    created = datetime.now().isoformat()
+    data = {
+        "id": sid,
+        "title": title,
+        "created_at": created,
+        "messages": [],
+        "session_memory": None,
+    }
+    sdir = _session_dir(sid)
+    sdir.mkdir(parents=True, exist_ok=True)
+    _save_session_meta(sid, data)
+    _append_message_jsonl(sid, {"role": "system", "content": "session_start", "timestamp": created})
+    _session_index[sid] = {"id": sid, "title": title, "created_at": created}
+    _save_index()
+    return data
+
+
+def _delete_session_files(sid: str) -> None:
+    import shutil
+    sdir = _session_dir(sid)
+    if sdir.exists():
+        shutil.rmtree(sdir)
+
+
+def _migrate_legacy() -> None:
+    legacy = Path("sessions.json")
+    if not legacy.exists():
+        return
+    try:
+        import json
+        legacy_data = json.loads(legacy.read_text(encoding="utf-8"))
+        for sid, data in legacy_data.items():
+            sdir = _session_dir(sid)
+            sdir.mkdir(parents=True, exist_ok=True)
+            messages = data.get("messages", [])
+            with open(sdir / "messages.jsonl", "wb") as f:
+                import orjson as _orjson
+                for msg in messages:
+                    f.write(_orjson.dumps(msg))
+                    f.write(b"\n")
+            _save_session_meta(sid, data)
+            _session_index[sid] = {
+                "id": sid,
+                "title": data.get("title", ""),
+                "created_at": data.get("created_at", ""),
+            }
+        _save_index()
+        legacy.rename(legacy.with_suffix(".json.bak"))
+    except Exception as e:
+        print(f"Migration warning: {e}")
+
+
+def _migrate_per_session() -> None:
+    for sid_path in SESSIONS_DIR.iterdir():
+        if not sid_path.is_dir():
+            continue
+        sid = sid_path.name
+        json_file = sid_path.with_suffix(".json")
+        if json_file.exists():
+            try:
+                import orjson as _orjson
+                data = _orjson.loads(json_file.read_bytes())
+                _save_session_meta(sid, data)
+                if not (sid_path / "messages.jsonl").exists():
+                    msgs = data.get("messages", [])
+                    for msg in msgs:
+                        _append_message_jsonl(sid, msg)
+                json_file.unlink()
+            except Exception:
+                pass
+
+
+_ensure_sessions_dir()
+_migrate_legacy()
+_migrate_per_session()
+_session_index = _load_index()
 
 _HIDDEN_PREVIEW_KEYS = {
     "common.connected_ws",
@@ -140,19 +275,6 @@ def _extract_session_preview(messages: list[dict]) -> str:
     return ""
 
 
-def _new_session(title: str = "") -> dict:
-    sid = str(uuid.uuid4())
-    sessions[sid] = {
-        "id": sid,
-        "title": title,
-        "created_at": datetime.now().isoformat(),
-        "messages": [],
-        "session_memory": None,
-    }
-    _save_sessions()
-    return sessions[sid]
-
-
 def _session_preview(s: dict) -> dict:
     msgs = s.get("messages", [])
     return {
@@ -197,7 +319,7 @@ def read_root():
 @app.get("/chats")
 def list_chats():
     """Return all sessions sorted by created_at descending."""
-    result = [_session_preview(s) for s in sessions.values()]
+    result = [_session_preview({"id": sid, **info}) for sid, info in _session_index.items()]
     result.sort(key=lambda x: x["created_at"], reverse=True)
     return result
 
@@ -215,27 +337,35 @@ class PatchChat(BaseModel):
 
 @app.patch("/chats/{session_id}")
 def rename_chat(session_id: str, body: PatchChat):
-    if session_id not in sessions:
+    if session_id not in _session_index:
         raise HTTPException(status_code=404, detail="Session not found")
-    sessions[session_id]["title"] = body.title
-    _save_sessions()
-    return _session_preview(sessions[session_id])
+    _session_index[session_id]["title"] = body.title
+    data = _load_session(session_id)
+    if data:
+        data["title"] = body.title
+        _save_session_meta(session_id, data)
+    _save_index()
+    return _session_preview({"id": session_id, **_session_index[session_id]})
 
 
 @app.delete("/chats/{session_id}")
 def delete_chat(session_id: str):
-    if session_id not in sessions:
+    if session_id not in _session_index:
         raise HTTPException(status_code=404, detail="Session not found")
-    del sessions[session_id]
-    _save_sessions()
+    del _session_index[session_id]
+    _delete_session_files(session_id)
+    _save_index()
     return {"ok": True}
 
 
 @app.get("/chats/{session_id}/messages")
 def get_messages(session_id: str):
-    if session_id not in sessions:
+    if session_id not in _session_index:
         raise HTTPException(status_code=404, detail="Session not found")
-    return sessions[session_id]["messages"]
+    data = _load_session(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return data.get("messages", [])
 
 
 @app.get("/tasks")
@@ -372,7 +502,7 @@ async def websocket_endpoint(websocket: WebSocket):
     session_id: Optional[str] = websocket.query_params.get("session_id")
 
     # Auto-create session if not provided or not found
-    if not session_id or session_id not in sessions:
+    if not session_id or session_id not in _session_index:
         session = _new_session()
         session_id = session["id"]
 
@@ -381,11 +511,12 @@ async def websocket_endpoint(websocket: WebSocket):
     adapter = WebAdapter(
         websocket=websocket,
         session_id=session_id,
-        sessions=sessions,
-        save_sessions=_save_sessions,
         uploads_dir=UPLOADS_DIR,
         playwright_manager=pm,
         run_agent=run_agent_loop,
+        append_message_fn=lambda sid, msg: _append_message_jsonl(sid, msg),
+        update_session_fn=lambda sid, data: _save_session_meta(sid, data),
+        load_history_fn=_load_messages_jsonl,
     )
     await adapter.start()
 

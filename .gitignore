@@ -8,6 +8,8 @@ browser_state/
 .tasks/
 .transcripts/
 workspace/
+sessions/
+sessions.json.bak
 # Vue
 node_modules/
 frontend/node_modules/
