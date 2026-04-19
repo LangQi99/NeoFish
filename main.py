@@ -8,16 +8,19 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 import os
 
+from memory.session_memory import SessionMemory
 from playwright_manager import PlaywrightManager
 from agent import run_agent_loop
 from platforms.web import WebAdapter
 from task_manager import task_manager
+from knowledge_service import KnowledgeService
 
 pm = PlaywrightManager()
 
@@ -25,6 +28,7 @@ pm = PlaywrightManager()
 WORKSPACE_DIR = Path(os.getenv("WORKDIR", "./workspace")).resolve()
 UPLOADS_DIR = WORKSPACE_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+knowledge_service = KnowledgeService(WORKSPACE_DIR)
 
 # ─── Session Store ────────────────────────────────────────────────────────────
 
@@ -143,6 +147,7 @@ def _new_session(title: str = "") -> dict:
         "title": title,
         "created_at": datetime.now().isoformat(),
         "messages": [],
+        "session_memory": None,
     }
     _save_sessions()
     return sessions[sid]
@@ -243,6 +248,120 @@ def list_tasks():
         "completed": sum(1 for task in tasks if task.get("status") == "completed"),
     }
     return {"tasks": tasks, "summary": summary}
+
+
+class CreateKnowledgeFolder(BaseModel):
+    name: str
+
+
+class ToggleKnowledgeFolder(BaseModel):
+    folder_id: str
+
+
+class KnowledgeSearchBody(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+@app.get("/knowledge/folders")
+def list_knowledge_folders():
+    folders = knowledge_service.list_folders()
+    return {"folders": folders}
+
+
+@app.post("/knowledge/folders")
+def create_knowledge_folder(body: CreateKnowledgeFolder):
+    try:
+        folder = knowledge_service.create_folder(body.name)
+        return {"folder": folder}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/knowledge/selected")
+def get_selected_knowledge_folders():
+    return {"selected_folder_ids": knowledge_service.get_selected()}
+
+
+@app.post("/knowledge/select")
+def select_knowledge_folder(body: ToggleKnowledgeFolder):
+    try:
+        knowledge_service.select_folder(body.folder_id)
+        return {"ok": True, "folder_id": body.folder_id}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+
+@app.post("/knowledge/deselect")
+def deselect_knowledge_folder(body: ToggleKnowledgeFolder):
+    knowledge_service.deselect_folder(body.folder_id)
+    return {"ok": True, "folder_id": body.folder_id}
+
+
+@app.post("/knowledge/upload")
+async def upload_knowledge_files(
+    folder_id: str = Form(...),
+    files: list[UploadFile] = File(...),
+):
+    parsed_files: list[tuple[str, bytes, str]] = []
+    for upload in files:
+        content = await upload.read()
+        parsed_files.append(
+            (
+                upload.filename or "unnamed_file",
+                content,
+                upload.content_type or "application/octet-stream",
+            )
+        )
+    try:
+        result = knowledge_service.upload_files(folder_id, parsed_files)
+        return {"ok": True, **result}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+
+@app.get("/knowledge/folders/{folder_id}/files")
+def list_knowledge_files(folder_id: str):
+    try:
+        files = knowledge_service.list_files(folder_id)
+        return {"files": files}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+
+@app.delete("/knowledge/files/{file_id}")
+def delete_knowledge_file(file_id: str):
+    try:
+        result = knowledge_service.delete_file(file_id)
+        return result
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+
+
+@app.get("/knowledge/files/{file_id}/preview")
+def preview_knowledge_file(file_id: str):
+    try:
+        file_path = knowledge_service.preview_path(file_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return FileResponse(file_path)
+
+
+@app.get("/knowledge/status")
+def knowledge_status():
+    return knowledge_service.status()
+
+
+@app.post("/knowledge/search")
+def knowledge_search(body: KnowledgeSearchBody):
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+    top_k = max(1, min(20, body.top_k))
+    results = knowledge_service.search(query=query, top_k=top_k)
+    return {"results": results}
 
 
 # ─── WebSocket ────────────────────────────────────────────────────────────────

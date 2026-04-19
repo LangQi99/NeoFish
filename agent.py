@@ -11,6 +11,8 @@ from playwright_manager import PlaywrightManager
 from workspace_manager import WorkspaceManager
 from task_manager import task_manager
 from background_manager import background_manager
+from memory.session_memory import SessionMemory
+from knowledge_service import KnowledgeService
 from message_center import MessageCenter
 from tool_registry import ToolExecutionResult, ToolRegistry
 
@@ -21,7 +23,7 @@ load_dotenv()
 client = AsyncAnthropic(
     api_key=os.getenv("ANTHROPIC_API_KEY"), base_url=os.getenv("ANTHROPIC_BASE_URL")
 )
-model_name = os.getenv("MODEL_NAME", "claude-3-7-sonnet-20250219")
+model_name = os.getenv("MODEL_NAME", "MiniMax-M2.7")
 
 # Configuration
 WORKDIR = Path(os.getenv("WORKDIR", "./workspace")).resolve()
@@ -32,6 +34,7 @@ KEEP_RECENT = 3  # For microcompact
 
 # Initialize managers
 workspace = WorkspaceManager(WORKDIR, strict=False)
+knowledge_service = KnowledgeService(WORKDIR)
 
 SYSTEM_PROMPT = """You are NeoFish, an autonomous agent that can:
 1. **Browse the web** - Navigate, click, type, extract information
@@ -88,8 +91,33 @@ For commands that take a long time:
 - `background_run` - Start a background command, returns task_id immediately
 - `check_background` - Check status of background tasks
 
+## Knowledge Base
+Use knowledge tools to retrieve information from selected knowledge folders:
+- `knowledge_search` - Semantic search over selected knowledge folders (FAISS-backed)
+
 If you ever encounter a strict login wall, CAPTCHA, or require the user to scan a QR code, you must call the `request_human_assistance` tool. Do NOT give up easily; only ask for help when absolutely necessary.
 When the task is completely finished, call `finish_task`.
+
+## Session Memory
+Throughout the conversation, you must maintain an accurate picture of where you are in the task.
+Whenever you complete a meaningful step, make progress, encounter an error, or the user's request changes direction,
+output a Memory Update block at the END of your response (after all tool calls and text).
+
+Format:
+```
+[Memory Update]
+current_state: <what is happening right now, in one clear sentence>
+task_spec: <the user's core request - keep the original intent>
+important_files: <key files created or modified>
+errors_corrections: <errors encountered and how they were resolved>
+pending_tasks: <genuinely unfinished tasks>
+[/Memory Update]
+```
+
+- Only output this block when there is something meaningful to record.
+- current_state is the MOST important field - always include it when there's progress.
+- Keep each field concise (1-2 sentences max).
+- If nothing meaningful happened, do not output the block.
 """.format(workdir=WORKDIR)
 
 TOOLS = [
@@ -386,6 +414,22 @@ TOOLS = [
             "required": [],
         },
     },
+    # Knowledge tools
+    {
+        "name": "knowledge_search",
+        "description": "Semantic search in selected knowledge folders. Use this when user asks questions about uploaded knowledge files.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "top_k": {
+                    "type": "integer",
+                    "description": "Number of results to return (default 5)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
     # Context management
     {
         "name": "compact",
@@ -487,6 +531,39 @@ def microcompact(messages: list) -> list:
             result["content"] = f"[Previous: used {tool_name}]"
 
     return messages
+
+
+_MEMORY_UPDATE_RE = re.compile(
+    r"\[Memory Update\]\s*\n(.*?)\n\[/Memory Update\]",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_memory_update(text: str) -> dict | None:
+    """Extract [Memory Update] block from AI response text. Returns dict of fields or None."""
+    m = _MEMORY_UPDATE_RE.search(text)
+    if not m:
+        return None
+    block = m.group(1)
+    result: dict = {}
+    for line in block.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("```"):
+            continue
+        if ": " in line:
+            key, _, val = line.partition(": ")
+            key = key.strip().lower().replace(" ", "_")
+            if key in (
+                "current_state",
+                "task_spec",
+                "important_files",
+                "workflow",
+                "errors_corrections",
+                "learnings",
+                "pending_tasks",
+            ):
+                result[key] = val.strip()
+    return result if result else None
 
 
 def _process_queued_message(
@@ -873,6 +950,19 @@ def _create_tool_registry(
             output=await background_manager.check(args.get("task_id"))
         )
 
+    async def _knowledge_search(args: dict) -> ToolExecutionResult:
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return ToolExecutionResult(output="Error: query is required")
+        top_k = int(args.get("top_k", 5) or 5)
+        top_k = max(1, min(20, top_k))
+        results = knowledge_service.search(query=query, top_k=top_k)
+        if not results:
+            return ToolExecutionResult(output="No relevant knowledge found in selected folders.")
+        return ToolExecutionResult(
+            output=json.dumps({"results": results}, ensure_ascii=False, indent=2)
+        )
+
     async def _compact(args: dict) -> ToolExecutionResult:
         focus = args.get("focus")
         return ToolExecutionResult(
@@ -901,6 +991,7 @@ def _create_tool_registry(
     registry.register("task_list", _task_list)
     registry.register("background_run", _background_run)
     registry.register("check_background", _check_background)
+    registry.register("knowledge_search", _knowledge_search)
     registry.register("compact", _compact)
 
     return registry
@@ -925,6 +1016,8 @@ async def run_agent_loop(
     web_queue_getter=None,
     web_session_id: str = None,
     cancel_event: asyncio.Event = None,
+    session_memory: SessionMemory | None = None,
+    save_session_memory_fn=None,
 ):
     effective_session_id = web_session_id or session_id
 
@@ -967,6 +1060,13 @@ async def run_agent_loop(
             {"message": "Error: No session ID provided", "message_key": "common.error"}
         )
         return
+
+    if session_memory is None:
+        session_memory = SessionMemory(session_id=effective_session_id)
+    if not session_memory.get("task_spec"):
+        session_memory.update("task_spec", user_instruction)
+    if not session_memory.get("current_state"):
+        session_memory.update("current_state", "Task started")
 
     try:
         page = await pm.get_or_create_page(effective_session_id)
@@ -1175,7 +1275,7 @@ async def run_agent_loop(
             response = await client.messages.create(
                 model=model_name,
                 max_tokens=4096,
-                system=SYSTEM_PROMPT,
+                system=f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
                 messages=messages,
                 tools=TOOLS,
             )
@@ -1198,7 +1298,7 @@ async def run_agent_loop(
                     response = await client.messages.create(
                         model=model_name,
                         max_tokens=4096,
-                        system=SYSTEM_PROMPT,
+                        system=f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
                         messages=messages,
                         tools=TOOLS,
                     )
@@ -1211,6 +1311,14 @@ async def run_agent_loop(
                 break
 
         messages.append({"role": "assistant", "content": assistant_blocks})
+
+        assistant_text = "\n".join(_extract_text_parts(assistant_blocks))
+        memory_update = _parse_memory_update(assistant_text)
+        if memory_update:
+            for key, value in memory_update.items():
+                session_memory.update(key, value)
+            if save_session_memory_fn:
+                save_session_memory_fn()
 
         # 3. Act
         tool_uses = [block for block in assistant_blocks if _get_block_type(block) == "tool_use"]
@@ -1277,7 +1385,6 @@ async def run_agent_loop(
                 }
             )
             messages[:] = await auto_compact(messages, manual_compact_focus)
-            # Reset user_content after compression
             user_content = []
 
         if is_finished:
@@ -1292,5 +1399,13 @@ async def run_agent_loop(
                 "message_key": "common.max_steps_error",
             }
         )
+
+    if is_finished:
+        session_memory.update("current_state", "Task completed")
+    else:
+        session_memory.update("current_state", "Task ended (max steps or cancelled)")
+
+    if save_session_memory_fn:
+        save_session_memory_fn()
 
     pm.deactivate_tab(effective_session_id)
