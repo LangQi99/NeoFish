@@ -1385,6 +1385,7 @@ async def run_agent_loop(
                 }
             )
             messages[:] = await auto_compact(messages, manual_compact_focus)
+            # Reset user_content after compression
             user_content = []
 
         if is_finished:
