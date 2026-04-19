@@ -84,8 +84,6 @@ class WebAdapter(PlatformAdapter):
         uploads_dir: Path,
         playwright_manager,
         run_agent: Callable,
-        session_memory=None,
-        save_session_memory_fn=None,
     ) -> None:
         super().__init__()
         self._ws = websocket
@@ -96,8 +94,6 @@ class WebAdapter(PlatformAdapter):
         self._workspace_dir = uploads_dir.parent
         self._pm = playwright_manager
         self._run_agent = run_agent
-        self._session_memory = session_memory
-        self._save_session_memory_fn = save_session_memory_fn
         self._message_center = MessageCenter(session_id)
         self._bus_handler = self._handle_bus_event
 
@@ -658,24 +654,6 @@ class WebAdapter(PlatformAdapter):
             )
             await self.on_message(unified)
 
-        def _save_sm():
-            self._sessions[self._session_id]["session_memory"] = (
-                sm.to_compact_dict()
-                if hasattr(sm, "to_compact_dict")
-                else None
-            )
-            self._save_sessions()
-
-        sm_data = self._sessions[self._session_id].get("session_memory")
-        if sm_data:
-            from memory.session_memory import SessionMemory
-
-            sm = SessionMemory.from_compact_dict(sm_data)
-        else:
-            from memory.session_memory import SessionMemory
-
-            sm = SessionMemory(session_id=self._session_id)
-
         history = self._build_history()
 
         _web_running.add(self._session_id)
@@ -698,8 +676,6 @@ class WebAdapter(PlatformAdapter):
                     web_queue_getter=lambda: _web_queues.get(self._session_id),
                     web_session_id=self._session_id,
                     cancel_event=cancel_event,
-                    session_memory=sm,
-                    save_session_memory_fn=_save_sm,
                 )
             finally:
                 _web_running.discard(self._session_id)
