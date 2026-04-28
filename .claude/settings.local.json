@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv --version)",
+      "Bash(uv sync *)",
+      "Bash(npm install *)",
+      "Bash(uv run *)",
+      "Bash(npm run *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 47672 //F)",
+      "Bash(taskkill //PID 30904 //F)",
+      "Bash(taskkill //PID 29552 //F)",
+      "Bash(python *)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(pip list *)",
+      "Bash(export VIRTUAL_ENV=\"$\\(pwd\\)/venv\")",
+      "Bash(export PATH=\"$VIRTUAL_ENV/Scripts:$PATH\")",
+      "Bash(./venv/Scripts/pip install *)",
+      "Bash(./venv/Scripts/python -m playwright install chromium)",
+      "Bash(./.venv/Scripts/pip install *)",
+      "Bash(./.venv/Scripts/python *)",
+      "Bash(kill 1942)"
+    ]
+  }
+}

@@ -140,6 +140,7 @@ class BackgroundManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self.workdir),
+                env=os.environ.copy(),
                 start_new_session=(os.name == "posix"),
             )
             if task_id in self.tasks:
