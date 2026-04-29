@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from croniter import croniter
+
 from scheduled_task import ScheduledTask, TaskTrigger
 
 logger = logging.getLogger(__name__)
@@ -119,8 +121,6 @@ class SchedulerService:
     # ── Tick Loop ──────────────────────────────────────────────
 
     async def _tick(self):
-        from croniter import croniter
-
         while self._running:
             now = datetime.now()
             for task in list(self._tasks.values()):

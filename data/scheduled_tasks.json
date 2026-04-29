@@ -11,7 +11,7 @@
       "debug": false,
       "enabled": true,
       "created_at": 1777459886.4069562,
-      "last_run_at": null,
+      "last_run_at": 1777467034.0722528,
       "last_status": null
     },
     "e50d516b-fe81-4dd4-873f-03a96657d040": {
@@ -25,7 +25,7 @@
       "debug": false,
       "enabled": true,
       "created_at": 1777463229.766923,
-      "last_run_at": null,
+      "last_run_at": 1777467034.074253,
       "last_status": null
     },
     "7b0417b0-4e41-4657-b93a-1f5ddc97efa3": {
@@ -39,7 +39,35 @@
       "debug": false,
       "enabled": true,
       "created_at": 1777465334.7050893,
-      "last_run_at": null,
+      "last_run_at": 1777467034.075252,
+      "last_status": null
+    },
+    "5f61637f-372d-4e9f-86a0-f727413e3ead": {
+      "task_id": "5f61637f-372d-4e9f-86a0-f727413e3ead",
+      "cron_expr": "37 20 * * *",
+      "description": "Take screenshot of GitHub homepage at 20:37",
+      "prompt": "Navigate to GitHub homepage (https://github.com) and take a screenshot of the current page. Save the screenshot to the workspace with filename 'github_homepage_20_37.png' and report that the screenshot has been captured at 20:37.",
+      "source_session_id": "e567a5d7-0e49-44d6-aaa7-dcb544ee1ea1",
+      "source_chat_id": "642476404",
+      "source_platform": "qq",
+      "debug": false,
+      "enabled": true,
+      "created_at": 1777466142.0045142,
+      "last_run_at": 1777467034.076255,
+      "last_status": null
+    },
+    "d12bfd2c-d620-43a4-9a95-f3e62092306e": {
+      "task_id": "d12bfd2c-d620-43a4-9a95-f3e62092306e",
+      "cron_expr": "54 20 29 4 *",
+      "description": "Take GitHub homepage screenshot at 20:54",
+      "prompt": "Navigate to GitHub homepage and take a screenshot. First navigate to https://github.com, then take a screenshot of the page and save it to the workspace with filename github_homepage_2054.png",
+      "source_session_id": "e567a5d7-0e49-44d6-aaa7-dcb544ee1ea1",
+      "source_chat_id": "642476404",
+      "source_platform": "qq",
+      "debug": false,
+      "enabled": true,
+      "created_at": 1777467121.4326434,
+      "last_run_at": 1777467240.7901475,
       "last_status": null
     }
   }

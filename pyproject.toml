@@ -18,4 +18,5 @@ dependencies = [
     "uvicorn>=0.41.0",
     "websockets>=16.0",
     "requests>=2.33.1",
+    "croniter>=6.2.2",
 ]

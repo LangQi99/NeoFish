@@ -231,7 +231,7 @@ class QQAdapter(PlatformAdapter):
                         if not self._running:
                             break
                         if msg.type == aiohttp.WSMsgType.TEXT:
-                            await self._dispatch(msg.data)
+                            asyncio.create_task(self._dispatch(msg.data))
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                             logger.warning("QQ WebSocket closed/error: %s", msg)
                             break
