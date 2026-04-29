@@ -87,6 +87,7 @@ class WebAdapter(PlatformAdapter):
         append_message_fn=None,
         update_session_fn=None,
         load_history_fn=None,
+        scheduler_service=None,
     ) -> None:
         super().__init__()
         self._ws = websocket
@@ -100,6 +101,7 @@ class WebAdapter(PlatformAdapter):
         self._session_memory = session_memory
         self._save_session_memory_fn = save_session_memory_fn
         self._load_history_fn = load_history_fn
+        self._scheduler_service = scheduler_service
         self._message_center = MessageCenter(session_id)
         self._bus_handler = self._handle_bus_event
 
@@ -719,6 +721,12 @@ class WebAdapter(PlatformAdapter):
                     cancel_event=cancel_event,
                     session_memory=sm,
                     save_session_memory_fn=_save_sm,
+                    scheduler_service=self._scheduler_service,
+                    source_meta={
+                        "session_id": self._session_id,
+                        "chat_id": self._session_id,
+                        "platform": "web",
+                    },
                 )
             finally:
                 _web_running.discard(self._session_id)

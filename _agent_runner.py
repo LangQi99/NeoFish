@@ -2,7 +2,7 @@
 _agent_runner.py - Shared helper for non-web platform adapters.
 
 Provides ``make_message_handler`` which returns an ``on_message`` callback
-suitable for TelegramAdapter and QQAdapter.  Each call creates an independent
+suitable for TelegramAdapter.  Each call creates an independent
 closure that shares a single PlaywrightManager instance.
 
 Handles message queuing when an agent is already running for a session.
@@ -23,7 +23,7 @@ from session import SessionStore
 logger = logging.getLogger(__name__)
 
 
-def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path = None) -> Callable:
+def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path = None, scheduler_service=None) -> Callable:
     """
     Return an ``async (UnifiedMessage) -> None`` callback for a platform adapter.
 
@@ -34,7 +34,7 @@ def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path
     Parameters
     ----------
     adapter:
-        A ``PlatformAdapter`` instance (TelegramAdapter or QQAdapter).
+        A ``PlatformAdapter`` instance (TelegramAdapter).
     pm:
         A started ``PlaywrightManager`` instance shared across sessions.
     session_store:
@@ -109,9 +109,10 @@ def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path
             except Exception as e:
                 logger.error("Failed to process attachment %s: %s", filename, e)
 
-        # If agent is already running for this session, queue the message.
-        # If it is blocked waiting for human intervention, also signal resume.
-        if session_store.is_running(session_id):
+        # Atomically check if agent is running AND claim the slot.
+        # This prevents the race condition where multiple incoming messages
+        # all pass is_running() before any calls set_running().
+        if not await session_store.try_start(session_id):
             logger.info("Agent running for session %s, queuing message", session_id)
             await session_store.enqueue_message(session_id, unified_msg.text, images)
             if pm.is_waiting_for_human(session_id):
@@ -120,9 +121,6 @@ def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path
                 )
                 pm.signal_resume(session_id)
             return
-
-        # Mark session as running
-        session_store.set_running(session_id, True)
 
         try:
             async def _send(msg) -> None:
@@ -153,6 +151,12 @@ def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path
                 session_store=session_store,
                 session_id=session_id,
                 uploaded_files=uploaded_files,
+                scheduler_service=scheduler_service,
+                source_meta={
+                    "session_id": session_id,
+                    "chat_id": unified_msg.user_id,
+                    "platform": unified_msg.platform,
+                },
             )
         finally:
             session_store.set_running(session_id, False)

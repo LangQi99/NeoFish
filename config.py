@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 # ── Core / LLM ────────────────────────────────────────────────────────────────
 
@@ -32,20 +32,6 @@ BG_TASK_TIMEOUT: int = int(os.getenv("BG_TASK_TIMEOUT", "300"))
 WEB_HOST: str = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT: int = int(os.getenv("WEB_PORT", "8000"))
 
-# ── Telegram platform ─────────────────────────────────────────────────────────
-
-# Obtain a token from @BotFather on Telegram.
-TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-
-# Comma-separated list of allowed Telegram user IDs (empty = allow everyone).
-# Example: TELEGRAM_ALLOWED_USERS=123456789,987654321
-_telegram_allowed_raw: str = os.getenv("TELEGRAM_ALLOWED_USERS", "")
-TELEGRAM_ALLOWED_USERS: list[str] = (
-    [u.strip() for u in _telegram_allowed_raw.split(",") if u.strip()]
-    if _telegram_allowed_raw
-    else []
-)
-
 # ── QQ platform ───────────────────────────────────────────────────────────────
 
 # WebSocket URL for NapCat / go-cqhttp (events and API calls).
@@ -60,5 +46,19 @@ _qq_allowed_raw: str = os.getenv("QQ_ALLOWED_IDS", "")
 QQ_ALLOWED_IDS: list[str] = (
     [u.strip() for u in _qq_allowed_raw.split(",") if u.strip()]
     if _qq_allowed_raw
+    else []
+)
+
+# ── Telegram platform ─────────────────────────────────────────────────────────
+
+# Obtain a token from @BotFather on Telegram.
+TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+# Comma-separated list of allowed Telegram user IDs (empty = allow everyone).
+# Example: TELEGRAM_ALLOWED_USERS=123456789,987654321
+_telegram_allowed_raw: str = os.getenv("TELEGRAM_ALLOWED_USERS", "")
+TELEGRAM_ALLOWED_USERS: list[str] = (
+    [u.strip() for u in _telegram_allowed_raw.split(",") if u.strip()]
+    if _telegram_allowed_raw
     else []
 )

@@ -40,6 +40,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+
 # Persist the mapping alongside the regular sessions file by default.
 _DEFAULT_MAP_FILE = Path("platform_sessions.json")
 
@@ -61,6 +62,7 @@ class SessionStore:
         self._queues: dict[str, asyncio.Queue] = {}
         # Running state: session_uuids that have an active agent loop
         self._running: set[str] = set()
+        self._start_locks: dict[str, asyncio.Lock] = {}
         self._load()
 
     # ── Persistence ──────────────────────────────────────────────────────────
@@ -104,6 +106,19 @@ class SessionStore:
     def get_chat_id(self, platform: str, session_id: str) -> Optional[str]:
         """Return the platform chat_id for a given session UUID, or *None*."""
         return self._reverse.get(self._rev_key(platform, session_id))
+
+    def reverse_lookup(self, session_id: str) -> tuple[str, str] | None:
+        """根据 session_id 反查其所属平台和 chat_id。
+
+        Returns (platform, chat_id) or None.
+        """
+        for rev_key, chat_id in self._reverse.items():
+            if rev_key.endswith(f":{session_id}"):
+                platform = rev_key.rsplit(":", 1)[0]
+                return platform, chat_id
+        if session_id in self._queues:
+            return "web", session_id
+        return None
 
     def get_or_create(self, platform: str, chat_id: str) -> str:
         """Return existing session UUID, or create and persist a new one."""
@@ -154,6 +169,24 @@ class SessionStore:
             self._running.add(session_id)
         else:
             self._running.discard(session_id)
+
+    def _get_start_lock(self, session_id: str) -> asyncio.Lock:
+        if session_id not in self._start_locks:
+            self._start_locks[session_id] = asyncio.Lock()
+        return self._start_locks[session_id]
+
+    async def try_start(self, session_id: str) -> bool:
+        """Atomically claim the agent slot for *session_id*.
+
+        Returns True if this caller won the slot and should start the agent.
+        Returns False if another agent is already running for this session.
+        """
+        lock = self._get_start_lock(session_id)
+        async with lock:
+            if session_id in self._running:
+                return False
+            self._running.add(session_id)
+            return True
 
     async def enqueue_message(self, session_id: str, text: str, images: list = None) -> None:
         """Put a message into the session's queue.
