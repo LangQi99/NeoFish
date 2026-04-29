@@ -2,7 +2,7 @@
 platforms/qq.py - QQ platform adapter for NeoFish.
 
 Connects to a NapCat / go-cqhttp instance via its forward WebSocket
-(onebot v11 event bus). All API calls go through WebSocket.
+(OneBot v11 event bus). All API calls go through WebSocket.
 
 Configuration (via .env or environment variables):
     QQ_WS_URL         — WebSocket URL for events and API calls,
@@ -31,7 +31,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
 
 try:
     import aiohttp
@@ -39,7 +39,7 @@ try:
 except ImportError:
     _AIOHTTP_AVAILABLE = False
 
-from config import QQ_ACCESS_TOKEN, QQ_WS_URL, QQ_ALLOWED_IDS
+from config import QQ_ACCESS_TOKEN, QQ_ALLOWED_IDS, QQ_WS_URL
 from message import UnifiedMessage
 from platforms.base import PlatformAdapter
 from session import SessionStore
@@ -52,8 +52,7 @@ _MSG_TYPE_PRIVATE = "private"
 
 
 class QQAdapter(PlatformAdapter):
-    """
-    Platform adapter for QQ via NapCat / go-cqhttp (OneBot v11).
+    """Platform adapter for QQ via NapCat / go-cqhttp (OneBot v11).
 
     Listens for events on the OneBot WebSocket and forwards incoming messages
     to ``self.on_message`` as ``UnifiedMessage`` objects. Replies are sent
@@ -189,7 +188,6 @@ class QQAdapter(PlatformAdapter):
         """Send a file to the QQ user.
 
         Uses upload_private_file or upload_group_file API for NapCat/OneBot v11.
-        Note: The file:// URL format is not supported; we use the absolute path directly.
         """
         target = self._session_store.get_chat_id("qq", session_id)
         if target is None:
@@ -198,12 +196,9 @@ class QQAdapter(PlatformAdapter):
 
         msg_type, chat_id = _parse_target(target)
 
-        # Send description as a separate message first if provided
         if description:
             await self.send_message(session_id, description)
 
-        # OneBot v11 uses separate APIs for file upload
-        # NapCat accepts absolute file paths directly
         abs_path = os.path.abspath(file_path)
 
         if msg_type == _MSG_TYPE_GROUP:
@@ -223,23 +218,13 @@ class QQAdapter(PlatformAdapter):
 
     async def _listen_loop(self) -> None:
         """Main loop: connect to WS, receive and dispatch OneBot events."""
-        # Build URL with access_token in query string (OneBot v11 standard)
-        ws_url = self._ws_url
-        if self._access_token:
-            from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
-            parsed = urlparse(ws_url)
-            query = parse_qs(parsed.query)
-            query["access_token"] = [self._access_token]
-            ws_url = urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
-
         headers = {}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
         while self._running:
-            closed_cleanly = False
             try:
-                async with self._session.ws_connect(ws_url, headers=headers) as ws:
+                async with self._session.ws_connect(self._ws_url, headers=headers) as ws:
                     self._ws = ws
                     logger.info("QQ adapter: WebSocket connected to %s", self._ws_url)
                     async for msg in ws:
@@ -249,7 +234,6 @@ class QQAdapter(PlatformAdapter):
                             await self._dispatch(msg.data)
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                             logger.warning("QQ WebSocket closed/error: %s", msg)
-                            closed_cleanly = True
                             break
             except asyncio.CancelledError:
                 break
@@ -257,9 +241,6 @@ class QQAdapter(PlatformAdapter):
                 if self._running:
                     logger.error("QQ adapter connection error: %s — reconnecting in 5s", exc)
                     await asyncio.sleep(5)
-            if closed_cleanly and self._running:
-                logger.info("QQ adapter: reconnecting in 3s...")
-                await asyncio.sleep(3)
 
     async def _dispatch(self, raw: str) -> None:
         """Parse a raw OneBot event JSON string and handle it."""
@@ -271,7 +252,7 @@ class QQAdapter(PlatformAdapter):
 
         # Handle API response (for WS-based API calls)
         if "echo" in event:
-            echo = event["echo"]
+            echo = str(event["echo"])
             if echo in self._pending_calls:
                 future = self._pending_calls.pop(echo)
                 if not future.done():
@@ -322,23 +303,20 @@ class QQAdapter(PlatformAdapter):
                 if seg_type == "image":
                     url = seg_data.get("url") or seg_data.get("file", "")
                     if url:
-                        attachments.append((f"qq_image.jpg", url))
+                        attachments.append(("qq_image.jpg", url))
 
                 elif seg_type == "file":
-                    # File attachment
                     file_url = seg_data.get("url") or seg_data.get("file", "")
                     filename = seg_data.get("name", "qq_file")
                     if file_url:
                         attachments.append((filename, file_url))
 
                 elif seg_type == "video":
-                    # Video attachment
                     video_url = seg_data.get("url") or seg_data.get("file", "")
                     if video_url:
                         attachments.append(("qq_video.mp4", video_url))
 
                 elif seg_type == "record":
-                    # Voice/audio attachment
                     audio_url = seg_data.get("url") or seg_data.get("file", "")
                     if audio_url:
                         attachments.append(("qq_audio.mp3", audio_url))
@@ -357,8 +335,7 @@ class QQAdapter(PlatformAdapter):
             logger.warning("QQAdapter.on_message is not set; message dropped.")
 
     async def _call_api(self, action: str, params: dict, timeout: float = 10.0) -> Optional[dict]:
-        """
-        Call a OneBot v11 API via WebSocket.
+        """Call a OneBot v11 API via WebSocket.
 
         Parameters
         ----------
@@ -407,8 +384,7 @@ class QQAdapter(PlatformAdapter):
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 def _parse_target(target: str):
-    """
-    Parse a stored target string back into (msg_type, chat_id).
+    """Parse a stored target string back into (msg_type, chat_id).
 
     Stored format:
         "group_<group_id>"   -> (_MSG_TYPE_GROUP, "<group_id>")

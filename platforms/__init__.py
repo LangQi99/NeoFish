@@ -5,7 +5,7 @@ Each sub-module implements PlatformAdapter for a specific messaging platform:
 
     web.py       — FastAPI / WebSocket (browser frontend)
     telegram.py  — Telegram Bot API (via python-telegram-bot)
-    qq.py        — QQ via NapCat / go-cqhttp WebSocket API
+    qq.py        — QQ via NapCat / go-cqhttp (OneBot v11 WebSocket)
 
 Import the concrete adapter classes directly:
 

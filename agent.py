@@ -5,7 +5,6 @@ import logging
 import time
 import re
 from pathlib import Path
-from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
 from playwright_manager import PlaywrightManager
 from workspace_manager import WorkspaceManager
@@ -15,21 +14,48 @@ from memory.session_memory import SessionMemory
 from knowledge_service import KnowledgeService
 from message_center import MessageCenter
 from tool_registry import ToolExecutionResult, ToolRegistry
+from config import (
+    ANTHROPIC_API_KEY,
+    ANTHROPIC_BASE_URL,
+    MODEL_NAME,
+    WORKDIR,
+    TOKEN_THRESHOLD,
+    MAX_TOKEN,
+    TRANSCRIPT_DIR,
+)
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+model_name = MODEL_NAME
 
-client = AsyncAnthropic(
-    api_key=os.getenv("ANTHROPIC_API_KEY"), base_url=os.getenv("ANTHROPIC_BASE_URL")
-)
-model_name = os.getenv("MODEL_NAME", "MiniMax-M2.7")
+_client: AsyncAnthropic | None = None
+_client_lock = asyncio.Lock()
 
-# Configuration
-WORKDIR = Path(os.getenv("WORKDIR", "./workspace")).resolve()
-TOKEN_THRESHOLD = int(os.getenv("TOKEN_THRESHOLD", "800000"))
-MAX_TOKEN = int(os.getenv("MAX_TOKEN", "1000000"))
-TRANSCRIPT_DIR = Path(os.getenv("TRANSCRIPT_DIR", "./.transcripts")).resolve()
+
+async def _get_client() -> AsyncAnthropic:
+    """Return the shared AsyncAnthropic client, creating it lazily once."""
+    global _client
+    if _client is not None:
+        return _client
+    async with _client_lock:
+        if _client is not None:
+            return _client
+        import httpx as _httpx
+        _http = _httpx.AsyncClient(timeout=120.0, http2=False, verify=True)
+        _client = AsyncAnthropic(
+            api_key=ANTHROPIC_API_KEY,
+            base_url=ANTHROPIC_BASE_URL,
+            timeout=120.0,
+            max_retries=4,
+            http_client=_http,
+        )
+        return _client
+
+
+def _reset_client():
+    """Discard cached client so the next call re-reads env vars."""
+    global _client
+    _client = None
 KEEP_RECENT = 3  # For microcompact
 
 # Initialize managers
@@ -689,6 +715,7 @@ async def auto_compact(messages: list, focus: str = None) -> list:
     )
 
     try:
+        client = await _get_client()
         response = await client.messages.create(
             model=model_name,
             max_tokens=2000,
@@ -1121,6 +1148,76 @@ def _create_tool_registry(
     return registry
 
 
+# ============== LLM Call with Compatibility Retry ==============
+
+_LLM_IMAGE_KEYWORDS = ("image_url", "validation errors for ValidatorIterator")
+
+
+async def _call_llm_with_retry(model, messages, system, tools, emit_info):
+    """
+    Call the LLM with staged fallback for gateway/proxy compatibility issues.
+
+    Retry stages:
+      1. Strip images from the last user message (gateway rejecting vision).
+      2. Strip images + send no tools (gateway/SDK type mismatch).
+    Only breaks the agent loop when all stages are exhausted.
+    """
+    client = await _get_client()
+    for stage in range(3):
+        try:
+            response = await client.messages.create(
+                model=model,
+                max_tokens=4096,
+                system=system,
+                messages=messages,
+                tools=tools,
+            )
+            return response.content
+        except Exception as e:
+            err_text = str(e)
+            is_image_err = any(kw in err_text for kw in _LLM_IMAGE_KEYWORDS)
+
+            if stage == 0:
+                if is_image_err:
+                    _strip_images_from_last_user(messages)
+                    await emit_info({
+                        "message": "当前模型网关不接受图片输入，已自动切换为纯文本模式继续执行。",
+                        "message_key": "common.image_input_disabled",
+                    })
+                    continue
+                # Non-image error: try stage 1 (strip images anyway)
+                _strip_images_from_last_user(messages)
+                logger.warning("LLM error (stage 0), retrying without images: %s", err_text[:200])
+                continue
+
+            if stage == 1:
+                tools = None
+                logger.warning("LLM error (stage 1), retrying without tools: %s", err_text[:200])
+                continue
+
+            # All stages exhausted
+            import traceback
+            logger.error("LLM call failed after 3 retries: %s\n%s", err_text, traceback.format_exc())
+            await emit_info({"message": f"LLM 调用失败: {err_text}", "message_key": "common.error"})
+            return None
+
+
+def _strip_images_from_last_user(messages):
+    """Remove image blocks from the last user message in-place."""
+    if not messages:
+        return
+    last = messages[-1]
+    if last.get("role") != "user":
+        return
+    content = last.get("content")
+    if not isinstance(content, list):
+        return
+    last["content"] = [
+        block for block in content
+        if not (isinstance(block, dict) and block.get("type") == "image")
+    ]
+
+
 # ============== Main Agent Loop ==============
 
 
@@ -1394,48 +1491,15 @@ async def run_agent_loop(
         messages.append({"role": "user", "content": user_content})
 
         # 2. Think
-        await emit_info(
-            {"message": "Agent is thinking...", "message_key": "common.agent_thinking"}
+        assistant_blocks = await _call_llm_with_retry(
+            model_name,
+            messages,
+            f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
+            TOOLS,
+            emit_info,
         )
-
-        try:
-            response = await client.messages.create(
-                model=model_name,
-                max_tokens=4096,
-                system=f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
-                messages=messages,
-                tools=TOOLS,
-            )
-            assistant_blocks = response.content
-        except Exception as e:
-            err_text = str(e)
-            if "image_url" in err_text or "validation errors for ValidatorIterator" in err_text:
-                user_content = [
-                    block for block in user_content
-                    if not (isinstance(block, dict) and block.get("type") == "image")
-                ]
-                messages[-1] = {"role": "user", "content": user_content}
-                await emit_info(
-                    {
-                        "message": "当前模型网关不接受图片输入，已自动切换为纯文本模式继续执行。",
-                        "message_key": "common.image_input_disabled",
-                    }
-                )
-                try:
-                    response = await client.messages.create(
-                        model=model_name,
-                        max_tokens=4096,
-                        system=f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
-                        messages=messages,
-                        tools=TOOLS,
-                    )
-                    assistant_blocks = response.content
-                except Exception as retry_error:
-                    await emit_info(f"Error calling LLM: {str(retry_error)}")
-                    break
-            else:
-                await emit_info(f"Error calling LLM: {err_text}")
-                break
+        if assistant_blocks is None:
+            break
 
         messages.append({"role": "assistant", "content": assistant_blocks})
 
@@ -1481,17 +1545,6 @@ async def run_agent_loop(
             tool_id, tool_name, args = _extract_tool_use(tool)
             result_str = ""
 
-            await emit_info(
-                {
-                    "message": f"Executing action: `{tool_name}` with args: {json.dumps(args, ensure_ascii=False)}",
-                    "message_key": "common.executing_action",
-                    "params": {
-                        "tool": tool_name,
-                        "args": json.dumps(args, ensure_ascii=False),
-                    },
-                }
-            )
-
             try:
                 execution = await tool_registry.execute(tool_name, args)
                 result_str = execution.output
@@ -1510,12 +1563,6 @@ async def run_agent_loop(
 
         # === NEW: Handle manual compact (Layer 3) ===
         if manual_compact:
-            await emit_info(
-                {
-                    "message": "Manual compression triggered...",
-                    "message_key": "common.manual_compressing",
-                }
-            )
             messages[:] = await auto_compact(messages, manual_compact_focus)
             # Reset user_content after compression
             user_content = []
@@ -1535,13 +1582,6 @@ async def run_agent_loop(
 
     if is_finished:
         session_memory.update("current_state", "Task completed")
-        await emit_info(
-            {
-                "message": "Task completed.",
-                "message_key": "common.task_completed",
-                "params": {"report": ""},
-            }
-        )
     else:
         session_memory.update("current_state", "Task ended (max steps or cancelled)")
 

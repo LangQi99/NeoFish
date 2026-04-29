@@ -69,19 +69,6 @@ def _make_result_callback(session_store, message_bus):
                 except Exception:
                     logger.exception("Telegram result callback failed")
 
-        elif source_platform == "qq":
-            qq = platform_adapters.get("qq")
-            if qq:
-                try:
-                    await qq.send_message(source_session_id, text)
-                    for f in result.files:
-                        try:
-                            await qq.send_file(source_session_id, f, "")
-                        except Exception:
-                            logger.exception("Failed to send file %s via QQ", f)
-                except Exception:
-                    logger.exception("QQ result callback failed")
-
         elif source_platform == "web":
             # Web：直接写入 session 的 messages.jsonl
             from main import _append_message_jsonl
@@ -103,6 +90,19 @@ def _make_result_callback(session_store, message_bus):
                 logger.info("Scheduled result persisted for web session %s", source_session_id)
             except Exception:
                 logger.exception("Failed to persist scheduled result for web")
+
+        elif source_platform == "qq":
+            qq = platform_adapters.get("qq")
+            if qq:
+                try:
+                    await qq.send_message(source_session_id, text)
+                    for f in result.files:
+                        try:
+                            await qq.send_file(source_session_id, f, "")
+                        except Exception:
+                            logger.exception("Failed to send file %s via QQ", f)
+                except Exception:
+                    logger.exception("QQ result callback failed")
 
         else:
             logger.warning("Unknown source_platform for result: %s", source_platform)

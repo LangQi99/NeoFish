@@ -3,17 +3,15 @@ run_qq.py - Standalone entry point for the NeoFish QQ bot.
 
 Run with:
     python run_qq.py
-or:
-    uv run python run_qq.py
 
 Required environment variables (set in .env or shell):
-    QQ_WS_URL     — WebSocket URL of your NapCat / go-cqhttp instance,
-                    e.g. ws://127.0.0.1:3001
-    ANTHROPIC_API_KEY — Anthropic API key for the agent
+    QQ_WS_URL          — WebSocket URL of your NapCat / go-cqhttp instance,
+                         e.g. ws://127.0.0.1:3001
+    ANTHROPIC_API_KEY  — Anthropic API key for the agent
 
 Optional:
-    QQ_ACCESS_TOKEN   — access token if configured in NapCat
-    QQ_ALLOWED_IDS    — comma-separated user/group IDs to accept
+    QQ_ACCESS_TOKEN    — access token if configured in NapCat
+    QQ_ALLOWED_IDS     — comma-separated user/group IDs to accept
     MODEL_NAME, WORKDIR, … — same as the web platform
 
 NapCat quick setup:
@@ -26,6 +24,7 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,8 +36,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _make_result_callback(session_store, adapter):
-    """创建 BotSession 的结果回调，推送定时任务结果到 QQ 用户。"""
+def _make_result_callback(adapter):
+    """Create a result callback that routes scheduled task results to QQ."""
 
     async def on_bot_task_complete(result, source_session_id, source_chat_id, source_platform, debug):
         status_icon = "[OK]" if result.status == "success" else "[FAIL]"
@@ -76,50 +75,58 @@ async def main():
     from playwright_manager import PlaywrightManager
     from session import session_store
     from _agent_runner import make_message_handler
-    from config import WORKDIR
     from bot_session import BotSession
     from scheduler_service import SchedulerService
 
+    # Shared PlaywrightManager
     pm = PlaywrightManager()
     await pm.start()
+    logger.info("PlaywrightManager started")
 
-    # ── Scheduler + BotSession setup ──────────────────────────
+    # BotSession task queue
     bot_queue = asyncio.Queue()
+
+    # SchedulerService
     scheduler = SchedulerService(bot_task_queue=bot_queue)
     await scheduler.start()
-    logger.info("SchedulerService started for QQ bot")
 
+    # QQ adapter
     adapter = QQAdapter(session_store=session_store)
     adapter.on_message = make_message_handler(
-        adapter, pm, session_store, WORKDIR, scheduler_service=scheduler
+        adapter, pm, session_store, scheduler_service=scheduler
     )
 
-    on_complete = _make_result_callback(session_store, adapter)
+    # Result callback
+    on_complete = _make_result_callback(adapter)
+
+    # BotSession
     bot = BotSession(
         task_queue=bot_queue,
         pm=pm,
         on_complete=on_complete,
     )
 
-    logger.info("Starting NeoFish QQ bot with scheduler…")
+    logger.info("Starting NeoFish QQ bot…")
     await adapter.start()
-    bot_task = asyncio.create_task(bot.start(), name="bot-session")
+
+    tasks = [
+        asyncio.create_task(bot.start(), name="bot-session"),
+    ]
 
     try:
+        # Wait forever (adapter runs its own task internally)
         await asyncio.Event().wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
         logger.info("Shutting down QQ bot…")
         await bot.stop()
-        bot_task.cancel()
-        try:
-            await bot_task
-        except asyncio.CancelledError:
-            pass
         await scheduler.stop()
         await adapter.stop()
         await pm.stop()
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 if __name__ == "__main__":

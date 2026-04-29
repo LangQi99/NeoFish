@@ -1,0 +1,32 @@
+{
+  "tasks": {
+    "f8642d8f-41c7-4e31-9a08-cebef65c06ed": {
+      "task_id": "f8642d8f-41c7-4e31-9a08-cebef65c06ed",
+      "cron_expr": "0 8 * * *",
+      "description": "每日早上8点检查当前时间",
+      "prompt": "打开浏览器，查看当前时间，然后调用 finish_task 报告当前时间。",
+      "source_session_id": "e567a5d7-0e49-44d6-aaa7-dcb544ee1ea1",
+      "source_chat_id": "642476404",
+      "source_platform": "qq",
+      "debug": false,
+      "enabled": true,
+      "created_at": 1777459886.4069562,
+      "last_run_at": null,
+      "last_status": null
+    },
+    "e50d516b-fe81-4dd4-873f-03a96657d040": {
+      "task_id": "e50d516b-fe81-4dd4-873f-03a96657d040",
+      "cron_expr": "50 19 * * *",
+      "description": "Daily Bilibili homepage screenshot at 19:50",
+      "prompt": "Navigate to https://www.bilibili.com/ and take a screenshot of the homepage. Save it with a timestamp in the filename (e.g., bilibili_homepage_YYYY-MM-DD_HH-MM-SS.png) in the workspace directory. Then send the screenshot file to the user.",
+      "source_session_id": "e567a5d7-0e49-44d6-aaa7-dcb544ee1ea1",
+      "source_chat_id": "642476404",
+      "source_platform": "qq",
+      "debug": false,
+      "enabled": true,
+      "created_at": 1777463229.766923,
+      "last_run_at": null,
+      "last_status": null
+    }
+  }
+}
