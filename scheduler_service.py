@@ -128,8 +128,13 @@ class SchedulerService:
                     continue
                 try:
                     cron = croniter(task.cron_expr, now)
+                    if task.last_run_at is None:
+                        # New task — arm it for the next cron window only
+                        task.last_run_at = time.time()
+                        self._save()
+                        continue
                     prev = cron.get_prev(datetime)
-                    if task.last_run_at is None or task.last_run_at < prev.timestamp():
+                    if task.last_run_at < prev.timestamp():
                         await self._trigger(task)
                 except Exception:
                     logger.exception("Cron check failed for task %s", task.task_id)
@@ -138,7 +143,9 @@ class SchedulerService:
 
     async def _trigger(self, task: ScheduledTask):
         logger.info("Triggering scheduled task: %s (%s)", task.description, task.task_id)
-        trigger = TaskTrigger.from_task(task)
-        await self._queue.put(trigger)
+        # Update last_run_at BEFORE await to prevent the tick loop from
+        # re-triggering the same cron window while the queue.put yields.
         task.last_run_at = time.time()
         self._save()
+        trigger = TaskTrigger.from_task(task)
+        await self._queue.put(trigger)

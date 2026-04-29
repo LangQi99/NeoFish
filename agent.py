@@ -257,7 +257,7 @@ TOOLS = [
     },
     {
         "name": "finish_task",
-        "description": "Call this tool when the final objective is fully accomplished. Pass the final report to the user.",
+        "description": "Call this tool when the final objective is fully accomplished. The report must be a user-facing summary of what was done and the results. Do NOT mention internal task IDs, root-task status, or system-level bookkeeping — the user does not share this context.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1356,7 +1356,8 @@ async def run_agent_loop(
             "- Its status is already `in_progress`.\n"
             "- Do not create a duplicate root task for the same request.\n"
             "- Update this root task when needed and mark it `completed` before calling finish_task.\n"
-            "- You may create additional sub-tasks only if they are genuinely useful."
+            "- Do NOT mention root-task IDs, status updates, or any internal task management in user-facing reports."
+            "\n- You may create additional sub-tasks only if they are genuinely useful."
         )
 
     # Add images as base64 for vision

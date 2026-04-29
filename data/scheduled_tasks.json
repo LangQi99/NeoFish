@@ -27,6 +27,20 @@
       "created_at": 1777463229.766923,
       "last_run_at": null,
       "last_status": null
+    },
+    "7b0417b0-4e41-4657-b93a-1f5ddc97efa3": {
+      "task_id": "7b0417b0-4e41-4657-b93a-1f5ddc97efa3",
+      "cron_expr": "25 20 * * *",
+      "description": "在20:25给GitHub首页截图",
+      "prompt": "导航到GitHub首页 https://github.com ，然后截图GitHub的首页。使用send_screenshot功能来发送截图给用户，描述为\"GitHub Homepage at 20:25\"。",
+      "source_session_id": "e567a5d7-0e49-44d6-aaa7-dcb544ee1ea1",
+      "source_chat_id": "642476404",
+      "source_platform": "qq",
+      "debug": false,
+      "enabled": true,
+      "created_at": 1777465334.7050893,
+      "last_run_at": null,
+      "last_status": null
     }
   }
 }
