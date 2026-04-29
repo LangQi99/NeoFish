@@ -105,6 +105,19 @@ class SessionStore:
         """Return the platform chat_id for a given session UUID, or *None*."""
         return self._reverse.get(self._rev_key(platform, session_id))
 
+    def reverse_lookup(self, session_id: str) -> tuple[str, str] | None:
+        """根据 session_id 反查其所属平台和 chat_id。
+
+        Returns (platform, chat_id) or None.
+        """
+        for rev_key, chat_id in self._reverse.items():
+            if rev_key.endswith(f":{session_id}"):
+                platform = rev_key.rsplit(":", 1)[0]
+                return platform, chat_id
+        if session_id in self._queues:
+            return "web", session_id
+        return None
+
     def get_or_create(self, platform: str, chat_id: str) -> str:
         """Return existing session UUID, or create and persist a new one."""
         fwd = self._fwd_key(platform, chat_id)

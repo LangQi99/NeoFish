@@ -23,7 +23,7 @@ from session import SessionStore
 logger = logging.getLogger(__name__)
 
 
-def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path = None) -> Callable:
+def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path = None, scheduler_service=None) -> Callable:
     """
     Return an ``async (UnifiedMessage) -> None`` callback for a platform adapter.
 
@@ -153,6 +153,12 @@ def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path
                 session_store=session_store,
                 session_id=session_id,
                 uploaded_files=uploaded_files,
+                scheduler_service=scheduler_service,
+                source_meta={
+                    "session_id": session_id,
+                    "chat_id": unified_msg.user_id,
+                    "platform": unified_msg.platform,
+                },
             )
         finally:
             session_store.set_running(session_id, False)

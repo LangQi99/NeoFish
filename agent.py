@@ -238,7 +238,12 @@ TOOLS = [
                 "report": {
                     "type": "string",
                     "description": "Markdown formatted summary",
-                }
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of generated file paths (relative to workspace) to send to user",
+                },
             },
             "required": ["report"],
         },
@@ -443,6 +448,61 @@ TOOLS = [
                 }
             },
             "required": [],
+        },
+    },
+    # Scheduled task tools
+    {
+        "name": "schedule_task",
+        "description": (
+            "Add a scheduled/recurring task. The bot will execute the given prompt "
+            "at the specified cron schedule. Results will be sent back to this conversation. "
+            "Use this for reminders, daily reports, periodic checks, etc. "
+            "Cron format: 'minute hour day month weekday' (e.g. '0 8 * * *' = daily at 8am)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cron": {
+                    "type": "string",
+                    "description": "Cron expression. e.g. '0 8 * * *' = 8am daily, '0 10 * * 1' = 10am every Monday",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The full prompt to send to the bot at the scheduled time. Include all necessary details for the task.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Short human-readable description (e.g. 'Daily Bilibili report')",
+                },
+                "debug": {
+                    "type": "boolean",
+                    "description": "If true, the raw prompt will be sent to this conversation when the task triggers. Default: false",
+                },
+            },
+            "required": ["cron", "prompt", "description"],
+        },
+    },
+    {
+        "name": "list_scheduled_tasks",
+        "description": "List all scheduled tasks created in this conversation, with their status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "cancel_scheduled_task",
+        "description": "Cancel a previously scheduled task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task ID to cancel (from list_scheduled_tasks)",
+                },
+            },
+            "required": ["task_id"],
         },
     },
 ]
@@ -796,6 +856,8 @@ def _create_tool_registry(
     emit_action_required,
     emit_image,
     emit_file,
+    scheduler_service=None,
+    source_meta: dict = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
 
@@ -971,6 +1033,68 @@ def _create_tool_registry(
             compact_focus=focus,
         )
 
+    # ── Scheduled Task Tools ──────────────────────────────────
+
+    async def _schedule_task(args: dict) -> ToolExecutionResult:
+        if scheduler_service is None:
+            return ToolExecutionResult(
+                output="Error: SchedulerService is not available. "
+                       "Scheduled tasks are only supported in run_all.py mode."
+            )
+        from scheduler_service import ScheduledTask
+        import uuid
+
+        task = ScheduledTask.new(
+            cron_expr=args["cron"],
+            description=args["description"],
+            prompt=args["prompt"],
+            source_session_id=source_meta.get("session_id", effective_session_id) if source_meta else effective_session_id,
+            source_chat_id=source_meta.get("chat_id", "") if source_meta else "",
+            source_platform=source_meta.get("platform", "unknown") if source_meta else "web",
+            debug=args.get("debug", False),
+        )
+        scheduler_service.add(task)
+
+        return ToolExecutionResult(
+            output=(
+                f"已添加定时任务：\n"
+                f"- 描述：{task.description}\n"
+                f"- Cron：{task.cron_expr}\n"
+                f"- 任务ID：{task.task_id}\n"
+                f"- Debug模式：{'开启' if task.debug else '关闭'}"
+            )
+        )
+
+    async def _list_scheduled_tasks(args: dict) -> ToolExecutionResult:
+        if scheduler_service is None:
+            return ToolExecutionResult(output="SchedulerService not available.")
+        tasks = scheduler_service.list_by_session(
+            source_meta.get("session_id", effective_session_id) if source_meta else effective_session_id
+        )
+        if not tasks:
+            return ToolExecutionResult(output="当前没有定时任务。")
+        lines = ["当前定时任务：", ""]
+        for i, t in enumerate(tasks, 1):
+            status_icon = "✅" if t.last_status == "success" else ("❌" if t.last_status else "⏳")
+            last_run = f"上次执行：{t.last_run_at}" if t.last_run_at else "尚未执行"
+            lines.append(f"[{i}] {status_icon} {t.description}")
+            lines.append(f"    Cron: {t.cron_expr} | {last_run}")
+            lines.append(f"    ID: {t.task_id}")
+            lines.append("")
+        return ToolExecutionResult(output="\n".join(lines))
+
+    async def _cancel_scheduled_task(args: dict) -> ToolExecutionResult:
+        if scheduler_service is None:
+            return ToolExecutionResult(output="SchedulerService not available.")
+        ok = scheduler_service.remove(args["task_id"])
+        if ok:
+            return ToolExecutionResult(output=f"已取消定时任务 {args['task_id']}")
+        return ToolExecutionResult(output=f"未找到定时任务 {args['task_id']}")
+
+    registry.register("schedule_task", _schedule_task)
+    registry.register("list_scheduled_tasks", _list_scheduled_tasks)
+    registry.register("cancel_scheduled_task", _cancel_scheduled_task)
+
     registry.register("snapshot", _snapshot)
     registry.register("navigate", _navigate)
     registry.register("click", _click)
@@ -1018,6 +1142,9 @@ async def run_agent_loop(
     cancel_event: asyncio.Event = None,
     session_memory: SessionMemory | None = None,
     save_session_memory_fn=None,
+    tool_overrides: dict = None,
+    scheduler_service=None,
+    source_meta: dict = None,
 ):
     effective_session_id = web_session_id or session_id
 
@@ -1329,8 +1456,8 @@ async def run_agent_loop(
             if text_blocks:
                 msg = "\n".join(text_blocks)
                 await emit_info(msg)
-                break
-            continue
+            is_finished = True
+            break
 
         manual_compact = False
         manual_compact_focus = None
@@ -1343,7 +1470,12 @@ async def run_agent_loop(
             emit_action_required=emit_action_required,
             emit_image=emit_image,
             emit_file=emit_file,
+            scheduler_service=scheduler_service,
+            source_meta=source_meta,
         )
+        if tool_overrides:
+            for name, handler in tool_overrides.items():
+                tool_registry.register(name, handler)
 
         for tool in tool_uses:
             tool_id, tool_name, args = _extract_tool_use(tool)
@@ -1403,6 +1535,13 @@ async def run_agent_loop(
 
     if is_finished:
         session_memory.update("current_state", "Task completed")
+        await emit_info(
+            {
+                "message": "Task completed.",
+                "message_key": "common.task_completed",
+                "params": {"report": ""},
+            }
+        )
     else:
         session_memory.update("current_state", "Task ended (max steps or cancelled)")
 

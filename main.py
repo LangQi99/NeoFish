@@ -23,6 +23,7 @@ from task_manager import task_manager
 from knowledge_service import KnowledgeService
 
 pm = PlaywrightManager()
+scheduler_service = None  # 由 run_all.py 设置
 
 # Workspace for user uploads
 WORKSPACE_DIR = Path(os.getenv("WORKDIR", "./workspace")).resolve()
@@ -517,6 +518,7 @@ async def websocket_endpoint(websocket: WebSocket):
         append_message_fn=lambda sid, msg: _append_message_jsonl(sid, msg),
         update_session_fn=lambda sid, data: _save_session_meta(sid, data),
         load_history_fn=_load_messages_jsonl,
+        scheduler_service=scheduler_service,
     )
     await adapter.start()
 
