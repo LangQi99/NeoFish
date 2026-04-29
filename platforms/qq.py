@@ -223,13 +223,23 @@ class QQAdapter(PlatformAdapter):
 
     async def _listen_loop(self) -> None:
         """Main loop: connect to WS, receive and dispatch OneBot events."""
+        # Build URL with access_token in query string (OneBot v11 standard)
+        ws_url = self._ws_url
+        if self._access_token:
+            from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
+            parsed = urlparse(ws_url)
+            query = parse_qs(parsed.query)
+            query["access_token"] = [self._access_token]
+            ws_url = urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+
         headers = {}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
         while self._running:
+            closed_cleanly = False
             try:
-                async with self._session.ws_connect(self._ws_url, headers=headers) as ws:
+                async with self._session.ws_connect(ws_url, headers=headers) as ws:
                     self._ws = ws
                     logger.info("QQ adapter: WebSocket connected to %s", self._ws_url)
                     async for msg in ws:
@@ -239,6 +249,7 @@ class QQAdapter(PlatformAdapter):
                             await self._dispatch(msg.data)
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                             logger.warning("QQ WebSocket closed/error: %s", msg)
+                            closed_cleanly = True
                             break
             except asyncio.CancelledError:
                 break
@@ -246,6 +257,9 @@ class QQAdapter(PlatformAdapter):
                 if self._running:
                     logger.error("QQ adapter connection error: %s — reconnecting in 5s", exc)
                     await asyncio.sleep(5)
+            if closed_cleanly and self._running:
+                logger.info("QQ adapter: reconnecting in 3s...")
+                await asyncio.sleep(3)
 
     async def _dispatch(self, raw: str) -> None:
         """Parse a raw OneBot event JSON string and handle it."""

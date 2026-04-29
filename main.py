@@ -495,6 +495,82 @@ def knowledge_search(body: KnowledgeSearchBody):
     return {"results": results}
 
 
+# ─── Scheduled Tasks ─────────────────────────────────────────────────────────
+
+
+class CreateScheduledTask(BaseModel):
+    cron_expr: str
+    description: str
+    prompt: str
+    debug: bool = False
+
+
+@app.get("/scheduled-tasks")
+def list_scheduled_tasks(session_id: str = ""):
+    """List scheduled tasks, optionally filtered by session_id."""
+    if scheduler_service is None:
+        return {"tasks": [], "note": "SchedulerService not available (use run_all.py)"}
+    if session_id:
+        tasks = scheduler_service.list_by_session(session_id)
+    else:
+        tasks = scheduler_service.list_all()
+    return {
+        "tasks": [
+            {
+                "task_id": t.task_id,
+                "cron_expr": t.cron_expr,
+                "description": t.description,
+                "prompt": t.prompt,
+                "source_session_id": t.source_session_id,
+                "source_chat_id": t.source_chat_id,
+                "source_platform": t.source_platform,
+                "debug": t.debug,
+                "enabled": t.enabled,
+                "created_at": t.created_at,
+                "last_run_at": t.last_run_at,
+                "last_status": t.last_status,
+            }
+            for t in tasks
+        ]
+    }
+
+
+@app.post("/scheduled-tasks")
+def create_scheduled_task(body: CreateScheduledTask):
+    """Create a new scheduled task via REST (for frontend timer UI)."""
+    if scheduler_service is None:
+        raise HTTPException(status_code=503, detail="SchedulerService not available (use run_all.py)")
+    from scheduled_task import ScheduledTask
+    task = ScheduledTask.new(
+        cron_expr=body.cron_expr,
+        description=body.description,
+        prompt=body.prompt,
+        source_session_id="web-ui",
+        source_chat_id="web-ui",
+        source_platform="web",
+        debug=body.debug,
+    )
+    scheduler_service.add(task)
+    return {
+        "task_id": task.task_id,
+        "cron_expr": task.cron_expr,
+        "description": task.description,
+        "enabled": task.enabled,
+        "created_at": task.created_at,
+    }
+
+
+@app.delete("/scheduled-tasks/{task_id}")
+def cancel_scheduled_task(task_id: str):
+    """Cancel (delete) a scheduled task by ID."""
+    if scheduler_service is None:
+        raise HTTPException(status_code=503, detail="SchedulerService not available (use run_all.py)")
+    ok = scheduler_service.remove(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    return {"ok": True, "task_id": task_id}
+
+
 # ─── WebSocket ────────────────────────────────────────────────────────────────
 
 
