@@ -1,4 +1,3 @@
-import os
 import json
 import asyncio
 import logging
@@ -62,7 +61,90 @@ KEEP_RECENT = 3  # For microcompact
 workspace = WorkspaceManager(WORKDIR, strict=False)
 knowledge_service = KnowledgeService(WORKDIR)
 
-SYSTEM_PROMPT = """You are NeoFish, an autonomous agent that can:
+# ── User Profile ─────────────────────────────────────────────────────────────
+
+PROFILE_FILE = Path("data/user_profile.json")
+PROFILE_FIELDS = [
+    "name", "gender", "age", "occupation",
+    "location", "interests", "language", "timezone", "bio",
+    "phone", "id_card",
+]
+PROFILE_LABELS: dict[str, str] = {
+    "name": "Name",
+    "gender": "Gender",
+    "age": "Age",
+    "occupation": "Occupation",
+    "location": "Location",
+    "interests": "Interests",
+    "language": "Language",
+    "timezone": "Timezone",
+    "bio": "Bio",
+    "phone": "Phone",
+    "id_card": "ID Card",
+}
+PROFILE_DEFAULTS: dict[str, str] = {
+    "language": "Chinese",
+    "timezone": "Asia/Shanghai",
+}
+
+_user_profile: dict[str, str] | None = None
+
+
+def load_user_profile() -> dict[str, str]:
+    global _user_profile
+    if _user_profile is not None:
+        return _user_profile
+    if PROFILE_FILE.exists():
+        try:
+            _user_profile = json.loads(PROFILE_FILE.read_text("utf-8"))
+            return _user_profile
+        except Exception:
+            pass
+    _user_profile = {}
+    return _user_profile
+
+
+def save_user_profile(data: dict[str, str]) -> None:
+    global _user_profile
+    cleaned = {k: str(data.get(k, "")).strip() for k in PROFILE_FIELDS}
+    PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROFILE_FILE.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), "utf-8")
+    _user_profile = cleaned
+
+
+def is_profile_configured() -> bool:
+    profile = load_user_profile()
+    return any(v.strip() for v in profile.values())
+
+
+def get_user_profile_text() -> str:
+    profile = load_user_profile()
+    lines: list[str] = []
+    for key in PROFILE_FIELDS:
+        value = profile.get(key, "").strip()
+        if not value:
+            value = PROFILE_DEFAULTS.get(key, "")
+        if value:
+            label = PROFILE_LABELS.get(key, key)
+            lines.append(f"- {label}: {value}")
+    if not lines:
+        return "No personal profile has been configured yet."
+    return "\n".join(lines)
+
+
+
+def build_system_prompt() -> str:
+    profile_text = get_user_profile_text()
+    return _SYSTEM_PROMPT_TEMPLATE.format(workdir=WORKDIR, user_profile=profile_text)
+
+
+_SYSTEM_PROMPT_TEMPLATE = """You are NeoFish, an autonomous agent that serves the user described below. Your tone, suggestions, and decisions should be tailored to this person.
+
+## User Profile
+{user_profile}
+
+## Core Capabilities
+You can:
 1. **Browse the web** - Navigate, click, type, extract information
 2. **Manage files** - Read, write, edit files in the workspace
 3. **Execute commands** - Run shell commands (blocking or background)
@@ -144,7 +226,7 @@ pending_tasks: <genuinely unfinished tasks>
 - current_state is the MOST important field - always include it when there's progress.
 - Keep each field concise (1-2 sentences max).
 - If nothing meaningful happened, do not output the block.
-""".format(workdir=WORKDIR)
+"""
 
 TOOLS = [
     # Browser tools
@@ -1495,7 +1577,7 @@ async def run_agent_loop(
         assistant_blocks = await _call_llm_with_retry(
             model_name,
             messages,
-            f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
+            f"{build_system_prompt()}\n\n{session_memory.get_all()}",
             TOOLS,
             emit_info,
         )

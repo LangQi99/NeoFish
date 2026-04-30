@@ -145,6 +145,43 @@
     "select_failed": "加载该知识库失败，请稍后重试。",
     "deselect_failed": "移除该知识库失败，请稍后重试。"
   },
+  "profile": {
+    "panel_title": "个人档案",
+    "panel_hint": "填写以下信息，我会更好地为您服务。",
+    "title": "让我们认识一下",
+    "subtitle": "填写以下信息，我会更好地为您服务",
+    "save": "保存",
+    "saving": "保存中...",
+    "edit": "编辑",
+    "cancel": "取消",
+    "hint": "随时可以在侧面信息栏中修改这些信息",
+    "fields": {
+      "name": "姓名",
+      "gender": "性别",
+      "age": "年龄",
+      "occupation": "职业",
+      "location": "所在地",
+      "interests": "兴趣爱好",
+      "language": "语言",
+      "timezone": "时区",
+      "bio": "个人简介",
+      "phone": "手机号",
+      "id_card": "身份证号"
+    },
+    "placeholders": {
+      "name": "请输入您的姓名",
+      "gender": "如：男、女",
+      "age": "请输入您的年龄",
+      "occupation": "如：软件工程师、设计师",
+      "location": "如：北京、上海",
+      "interests": "如：编程、摄影、音乐",
+      "language": "如：Chinese、English",
+      "timezone": "如：Asia/Shanghai",
+      "bio": "简单介绍一下自己...",
+      "phone": "请输入手机号",
+      "id_card": "请输入身份证号"
+    }
+  },
   "gallery": {
     "title": "图库",
     "placeholder": "图库面板已保留。后续可在这里管理图片素材与引用。"

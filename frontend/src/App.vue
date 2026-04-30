@@ -8,6 +8,7 @@ import BrowserView from './components/BrowserView.vue'
 import ThinkingChain from './components/ThinkingChain.vue'
 import TaskSidebar from './components/TaskSidebar.vue'
 import KnowledgeWorkspace from './components/KnowledgeWorkspace.vue'
+import type { ProfileField } from './components/ProfilePanel.vue'
 import { useChatHistory } from './composables/useChatHistory'
 import { useTasks } from './composables/useTasks'
 import { useDebugMode } from './composables/useDebugMode'
@@ -22,6 +23,24 @@ const { loadFolderFiles } = useKnowledge()
 const { debugMode } = useDebugMode()
 useThemeMode()
 const mainView = ref<'chat' | 'knowledge'>('chat')
+
+// ─── Profile ────────────────────────────────────────────────────────────────
+const DEFAULT_PROFILE_FIELDS: ProfileField[] = [
+  { key: 'name', label: 'Name', default: '' },
+  { key: 'gender', label: 'Gender', default: '' },
+  { key: 'age', label: 'Age', default: '' },
+  { key: 'occupation', label: 'Occupation', default: '' },
+  { key: 'location', label: 'Location', default: '' },
+  { key: 'interests', label: 'Interests', default: '' },
+  { key: 'language', label: 'Language', default: 'Chinese' },
+  { key: 'timezone', label: 'Timezone', default: 'Asia/Shanghai' },
+  { key: 'bio', label: 'Bio', default: '' },
+  { key: 'phone', label: 'Phone', default: '' },
+  { key: 'id_card', label: 'ID Card', default: '' },
+]
+const profileFields = ref<ProfileField[]>([...DEFAULT_PROFILE_FIELDS])
+const currentProfile = ref<Record<string, string>>({})
+const profilePanelOpen = ref(false)
 
 // ─── WebSocket ─────────────────────────────────────────────────────────────
 const ws = ref<WebSocket | null>(null)
@@ -51,6 +70,15 @@ function connectWs(sessionId: string) {
     const data = JSON.parse(event.data)
     if (data.session_id && data.session_id !== activeChatId.value) {
       activeChatId.value = data.session_id
+    }
+    if (data.type === 'profile_required') {
+      profileFields.value = data.fields || []
+      profilePanelOpen.value = true
+      return
+    }
+    if (data.type === 'profile_saved') {
+      profilePanelOpen.value = false
+      return
     }
     if (data.type === 'task_status') {
       isTaskRunning.value = data.status === 'running'
@@ -413,6 +441,13 @@ function stopTask() {
   }
 }
 
+function handleProfileSubmit(profile: Record<string, string>) {
+  currentProfile.value = { ...profile }
+  if (ws.value && isConnected.value) {
+    ws.value.send(JSON.stringify({ type: 'user_profile', profile }))
+  }
+}
+
 /** Request an embedded browser takeover. */
 function requestTakeover() {
   if (ws.value && isConnected.value) {
@@ -487,9 +522,14 @@ onUnmounted(() => {
 <template>
   <div class="theme-app h-screen w-full flex overflow-hidden font-sans">
     <Sidebar
+      :profile-fields="profileFields"
+      :current-profile="currentProfile"
+      :profile-panel-open="profilePanelOpen"
       @new-chat="handleNewChat"
       @select-chat="switchToSession"
       @open-knowledge-workspace="openKnowledgeWorkspace"
+      @save-profile="handleProfileSubmit"
+      @profile-panel-closed="profilePanelOpen = false"
     />
     
     <main class="relative flex h-full min-w-0 flex-1 flex-col">

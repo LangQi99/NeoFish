@@ -145,6 +145,43 @@
     "select_failed": "Failed to load this knowledge folder.",
     "deselect_failed": "Failed to remove this knowledge folder."
   },
+  "profile": {
+    "panel_title": "Profile",
+    "panel_hint": "Fill in the details below so I can serve you better.",
+    "title": "Let's get to know each other",
+    "subtitle": "Fill in the details below so I can serve you better",
+    "save": "Save",
+    "saving": "Saving...",
+    "edit": "Edit",
+    "cancel": "Cancel",
+    "hint": "You can change these anytime from the sidebar",
+    "fields": {
+      "name": "Name",
+      "gender": "Gender",
+      "age": "Age",
+      "occupation": "Occupation",
+      "location": "Location",
+      "interests": "Interests",
+      "language": "Language",
+      "timezone": "Timezone",
+      "bio": "Bio",
+      "phone": "Phone",
+      "id_card": "ID Card"
+    },
+    "placeholders": {
+      "name": "Your name",
+      "gender": "e.g. Male, Female",
+      "age": "Your age",
+      "occupation": "e.g. Software Engineer, Designer",
+      "location": "e.g. New York, London",
+      "interests": "e.g. Coding, Photography, Music",
+      "language": "e.g. English, Chinese",
+      "timezone": "e.g. America/New_York",
+      "bio": "A few words about yourself...",
+      "phone": "Your phone number",
+      "id_card": "Your ID card number"
+    }
+  },
   "gallery": {
     "title": "Gallery",
     "placeholder": "Gallery panel is preserved. Asset management can be added here."

@@ -120,6 +120,25 @@ class WebAdapter(PlatformAdapter):
             )
         )
 
+        # Check if user profile is configured, request if not
+        from agent import is_profile_configured, PROFILE_FIELDS, PROFILE_LABELS, PROFILE_DEFAULTS
+        if not is_profile_configured():
+            await self._ws.send_text(
+                json.dumps(
+                    {
+                        "type": "profile_required",
+                        "fields": [
+                            {
+                                "key": k,
+                                "label": PROFILE_LABELS.get(k, k),
+                                "default": PROFILE_DEFAULTS.get(k, ""),
+                            }
+                            for k in PROFILE_FIELDS
+                        ],
+                    }
+                )
+            )
+
         task_status = task_manager.get_task_status(self._session_id)
         await self._ws.send_text(
             json.dumps(
@@ -380,6 +399,8 @@ class WebAdapter(PlatformAdapter):
             await self._handle_takeover_navigate(payload)
         elif msg_type == "user_input":
             await self._handle_user_input(payload)
+        elif msg_type == "user_profile":
+            await self._handle_user_profile(payload)
 
     async def _handle_stop_task(self) -> None:
         task_stopped = await task_manager.stop_task(self._session_id)
@@ -585,6 +606,17 @@ class WebAdapter(PlatformAdapter):
         url = payload.get("url", "")
         if url:
             await self._pm.handle_takeover_navigate(url)
+
+    async def _handle_user_profile(self, payload: dict) -> None:
+        """Save user profile data sent from the frontend dialog."""
+        from agent import save_user_profile
+        save_user_profile(payload.get("profile", {}))
+        await self._send_packet(
+            {
+                "type": "profile_saved",
+                "message": "Profile saved successfully.",
+            }
+        )
 
     async def _handle_user_input(self, payload: dict) -> None:
         user_msg: str = payload.get("message", "")

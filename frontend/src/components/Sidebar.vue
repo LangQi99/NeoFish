@@ -1,24 +1,47 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { PlaySquare, Settings, Compass, LayoutGrid, Languages, Bug, Moon, SunMedium, BookMarked } from 'lucide-vue-next'
+import { ref, watch } from 'vue'
+import { PlaySquare, Settings, Compass, LayoutGrid, Languages, Bug, Moon, SunMedium, BookMarked, User } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
 import GalleryPanel from './GalleryPanel.vue'
 import KnowledgePanel from './KnowledgePanel.vue'
+import ProfilePanel from './ProfilePanel.vue'
+import type { ProfileField } from './ProfilePanel.vue'
 import { useDebugMode } from '../composables/useDebugMode'
 import { useThemeMode } from '../composables/useThemeMode'
 
 const { locale } = useI18n()
 const { debugMode, toggleDebug } = useDebugMode()
 const { isDarkMode, toggleTheme } = useThemeMode()
+
+const props = defineProps<{
+  profileFields: ProfileField[]
+  currentProfile: Record<string, string>
+  profilePanelOpen: boolean
+}>()
+
 const emit = defineEmits<{
   (e: 'new-chat'): void
   (e: 'select-chat', id: string): void
   (e: 'open-knowledge-workspace', folderId: string): void
+  (e: 'save-profile', profile: Record<string, string>): void
+  (e: 'profile-panel-closed'): void
 }>()
 
-const activePanel = ref<'history' | 'gallery' | 'knowledge' | null>(null)
+const activePanel = ref<'history' | 'gallery' | 'knowledge' | 'profile' | null>(null)
 const panelWidth = 'var(--history-panel-width)'
+
+watch(() => props.profilePanelOpen, (val) => {
+  if (val) {
+    activePanel.value = 'profile'
+  }
+})
+
+watch(activePanel, (val) => {
+  if (val !== 'profile') {
+    emit('profile-panel-closed')
+  }
+})
 
 function toggleHistory() {
   activePanel.value = activePanel.value === 'history' ? null : 'history'
@@ -30,6 +53,10 @@ function toggleGallery() {
 
 function toggleKnowledge() {
   activePanel.value = activePanel.value === 'knowledge' ? null : 'knowledge'
+}
+
+function toggleProfile() {
+  activePanel.value = activePanel.value === 'profile' ? null : 'profile'
 }
 
 function toggleLanguage() {
@@ -46,6 +73,10 @@ function handleSelectChat(id: string) {
 
 function handleOpenFolder(folderId: string) {
   emit('open-knowledge-workspace', folderId)
+}
+
+function handleSaveProfile(profile: Record<string, string>) {
+  emit('save-profile', profile)
 }
 </script>
 
@@ -112,8 +143,13 @@ function handleOpenFolder(folderId: string) {
             <Bug :size="20" stroke-width="2" />
           </button>
 
-          <button :title="$t('sidebar.settings')" class="rounded-xl p-2 transition-colors theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]">
-            <Settings :size="20" stroke-width="2" />
+          <button
+            @click="toggleProfile"
+            :title="$t('profile.panel_title')"
+            class="rounded-xl p-2 transition-all duration-300"
+            :class="activePanel === 'profile' ? 'theme-button-strong shadow-md' : 'theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]'"
+          >
+            <User :size="20" stroke-width="2" />
           </button>
         </div>
       </div>
@@ -134,6 +170,12 @@ function handleOpenFolder(folderId: string) {
           />
           <GalleryPanel v-else-if="activePanel === 'gallery'" />
           <KnowledgePanel v-else-if="activePanel === 'knowledge'" @open-folder="handleOpenFolder" />
+          <ProfilePanel
+            v-else-if="activePanel === 'profile'"
+            :fields="profileFields"
+            :currentProfile="currentProfile"
+            @save="handleSaveProfile"
+          />
         </div>
       </div>
     </div>

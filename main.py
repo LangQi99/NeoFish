@@ -571,6 +571,37 @@ def cancel_scheduled_task(task_id: str):
     return {"ok": True, "task_id": task_id}
 
 
+
+# ─── User Profile ─────────────────────────────────────────────────────────────
+
+class UserProfileBody(BaseModel):
+    profile: dict[str, str]
+
+
+@app.get("/profile")
+def get_profile():
+    """Return the current user profile."""
+    from agent import load_user_profile, PROFILE_FIELDS, PROFILE_LABELS, PROFILE_DEFAULTS
+    profile = load_user_profile()
+    fields = [
+        {
+            "key": k,
+            "label": PROFILE_LABELS.get(k, k),
+            "value": profile.get(k, PROFILE_DEFAULTS.get(k, "")),
+        }
+        for k in PROFILE_FIELDS
+    ]
+    return {"profile": profile, "fields": fields, "configured": any(v.strip() for v in profile.values())}
+
+
+@app.put("/profile")
+def save_profile(body: UserProfileBody):
+    """Save the user profile."""
+    from agent import save_user_profile
+    save_user_profile(body.profile)
+    return {"ok": True}
+
+
 # ─── WebSocket ────────────────────────────────────────────────────────────────
 
 
