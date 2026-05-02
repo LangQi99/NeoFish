@@ -317,6 +317,28 @@ def read_root():
     return {"message": "Welcome to NeoFish Backend"}
 
 
+class BrowserModeBody(BaseModel):
+    mode: str
+
+
+@app.get("/browser/mode")
+def get_browser_mode():
+    return {"mode": pm.browser_mode}
+
+
+@app.post("/browser/mode")
+async def set_browser_mode(body: BrowserModeBody):
+    try:
+        new_mode = await pm.switch_mode(body.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to switch mode: {e}")
+    return {"mode": new_mode}
+
+
 @app.get("/chats")
 def list_chats():
     """Return all sessions sorted by created_at descending."""

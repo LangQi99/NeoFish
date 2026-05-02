@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PlaySquare, Settings, Compass, LayoutGrid, Languages, Bug, Moon, SunMedium, BookMarked } from 'lucide-vue-next'
+import { PlaySquare, Settings, Compass, LayoutGrid, Languages, Bug, Moon, SunMedium, BookMarked, Chrome } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
 import GalleryPanel from './GalleryPanel.vue'
 import KnowledgePanel from './KnowledgePanel.vue'
 import { useDebugMode } from '../composables/useDebugMode'
 import { useThemeMode } from '../composables/useThemeMode'
+import { useBrowserMode } from '../composables/useBrowserMode'
 
 const { locale } = useI18n()
 const { debugMode, toggleDebug } = useDebugMode()
 const { isDarkMode, toggleTheme } = useThemeMode()
+const { mode: browserMode, switching: browserSwitching, lastError: browserError, toggle: toggleBrowser } = useBrowserMode()
 const emit = defineEmits<{
   (e: 'new-chat'): void
   (e: 'select-chat', id: string): void
@@ -84,6 +86,22 @@ function handleOpenFolder(folderId: string) {
         </div>
 
         <div class="mt-auto flex flex-col gap-4">
+          <button
+            @click="toggleBrowser"
+            :disabled="browserSwitching"
+            class="rounded-xl p-2 transition-all disabled:opacity-60"
+            :class="browserMode === 'local_chrome' ? 'bg-emerald-500/15 text-emerald-400' : 'theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]'"
+            :title="browserError
+              ? (browserError as string)
+              : browserSwitching
+                ? $t('sidebar.browser_switching')
+                : browserMode === 'local_chrome'
+                  ? $t('sidebar.browser_local_chrome_on')
+                  : $t('sidebar.browser_local_chrome_off')"
+          >
+            <Chrome :size="20" stroke-width="2" />
+          </button>
+
           <button
             @click="toggleLanguage"
             class="flex flex-col items-center gap-0.5 rounded-xl p-2 transition-all theme-text-muted hover:bg-[var(--surface-soft)] hover:text-[color:var(--text-primary)]"

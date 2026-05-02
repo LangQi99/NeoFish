@@ -12,6 +12,10 @@ from tab_manager import TabManager, DEFAULT_MAX_TABS, DEFAULT_TAB_TTL
 
 BROWSER_STATE_DIR = Path("browser_state")
 
+BROWSER_MODE_HEADLESS = "headless"
+BROWSER_MODE_LOCAL_CHROME = "local_chrome"
+_VALID_BROWSER_MODES = {BROWSER_MODE_HEADLESS, BROWSER_MODE_LOCAL_CHROME}
+
 _DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -68,6 +72,13 @@ class PlaywrightManager:
         self.viewport_width: int = 1280
         self.viewport_height: int = 800
 
+        self._browser_mode: str = BROWSER_MODE_HEADLESS
+        self._mode_switch_lock: asyncio.Lock = asyncio.Lock()
+
+    @property
+    def browser_mode(self) -> str:
+        return self._browser_mode
+
     @property
     def page(self) -> Optional[Page]:
         if self.tab_manager and self._current_session_id:
@@ -76,12 +87,21 @@ class PlaywrightManager:
 
     async def _launch_context(self, headless: bool) -> None:
         BROWSER_STATE_DIR.mkdir(exist_ok=True)
-        self.context = await self.playwright.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_STATE_DIR),
-            headless=headless,
-            viewport={"width": 1280, "height": 800},
-            user_agent=_DEFAULT_USER_AGENT,
-        )
+        if self._browser_mode == BROWSER_MODE_LOCAL_CHROME:
+            self.context = await self.playwright.chromium.launch_persistent_context(
+                user_data_dir=str(BROWSER_STATE_DIR),
+                channel="chrome",
+                headless=False,
+                viewport={"width": 1280, "height": 800},
+                user_agent=_DEFAULT_USER_AGENT,
+            )
+        else:
+            self.context = await self.playwright.chromium.launch_persistent_context(
+                user_data_dir=str(BROWSER_STATE_DIR),
+                headless=headless,
+                viewport={"width": 1280, "height": 800},
+                user_agent=_DEFAULT_USER_AGENT,
+            )
         self.tab_manager = TabManager(
             context=self.context,
             max_tabs=self.max_tabs,
@@ -104,6 +124,54 @@ class PlaywrightManager:
             pass
         if self.playwright:
             await self.playwright.stop()
+
+    async def switch_mode(self, mode: str) -> str:
+        if mode not in _VALID_BROWSER_MODES:
+            raise ValueError(f"Unknown browser mode: {mode}")
+        if self._in_takeover:
+            raise RuntimeError("Cannot switch browser mode during takeover")
+
+        async with self._mode_switch_lock:
+            if mode == self._browser_mode:
+                return self._browser_mode
+
+            preserved_session = self._current_session_id
+            preserved_url = "about:blank"
+            page = self._get_page(preserved_session)
+            try:
+                if page and not page.is_closed():
+                    preserved_url = page.url
+            except Exception:
+                pass
+
+            if self.tab_manager:
+                await self.tab_manager.stop()
+                self.tab_manager = None
+            try:
+                if self.context:
+                    await self.context.close()
+            except Exception:
+                pass
+            self.context = None
+
+            self._browser_mode = mode
+            await self._launch_context(headless=(mode == BROWSER_MODE_HEADLESS))
+
+            if preserved_session:
+                self.set_current_session(preserved_session)
+                try:
+                    new_page = await self.tab_manager.get_or_create_tab(preserved_session)
+                    if preserved_url and preserved_url != "about:blank":
+                        try:
+                            await new_page.goto(preserved_url, timeout=15000)
+                        except Exception as e:
+                            logger.warning(
+                                "switch_mode: could not restore %s: %s", preserved_url, e
+                            )
+                except Exception as e:
+                    logger.warning("switch_mode: could not recreate tab: %s", e)
+
+            return self._browser_mode
 
     def set_current_session(self, session_id: str):
         self._current_session_id = session_id

@@ -48,7 +48,10 @@
     "theme_dark": "Switch to dark mode",
     "theme_light": "Switch to light mode",
     "debug_on": "Debug Mode: On",
-    "debug_off": "Debug Mode: Off"
+    "debug_off": "Debug Mode: Off",
+    "browser_local_chrome_on": "Local Chrome mode is ON: the agent drives your computer's Chrome in a visible window so you can watch and intervene. Click to switch back to headless.",
+    "browser_local_chrome_off": "Headless mode (current): the agent runs an invisible browser in the background. Click to switch to Local Chrome mode: the agent launches your computer's Chrome in a visible window (shares the same login state / cookies) for observation and manual collaboration.",
+    "browser_switching": "Switching browser mode…"
   },
   "history": {
     "panel_title": "Chats",

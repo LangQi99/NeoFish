@@ -48,7 +48,10 @@
     "theme_dark": "切换夜间模式",
     "theme_light": "切换白天模式",
     "debug_on": "调试模式：已开启",
-    "debug_off": "调试模式：已关闭"
+    "debug_off": "调试模式：已关闭",
+    "browser_local_chrome_on": "本机 Chrome 模式已开启：Agent 使用你电脑上的 Chrome 打开可见窗口执行任务，方便观察与手动介入；点击切回无头模式。",
+    "browser_local_chrome_off": "当前为无头模式：Agent 在后台运行不可见的浏览器。点击切换到本机 Chrome 模式：调用电脑上的 Chrome，弹出可见窗口执行任务（共用同一套登录态/Cookie），便于观察与手动协作。",
+    "browser_switching": "正在切换浏览器模式…"
   },
   "history": {
     "panel_title": "对话列表",
