@@ -213,6 +213,39 @@ TOOLS = [
         },
     },
     {
+        "name": "upload_file",
+        "description": (
+            "Upload local file(s) to a <input type=\"file\"> element. "
+            "Required for file pickers — DO NOT use type_text for file inputs, browsers block that. "
+            "Prefer `ref` from snapshot; fall back to CSS/XPath `selector` pointing at the input[type=file] "
+            "(it's often hidden with display:none, that's fine — set_input_files works on hidden inputs). "
+            "If the site has only a custom upload button (no input[type=file] visible), set `trigger_selector` "
+            "or `trigger_ref` to that button and omit ref/selector — the tool will click it and handle the "
+            "native file chooser dialog."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string", "description": "Ref of the <input type=file>."},
+                "selector": {"type": "string", "description": "CSS/XPath of the <input type=file>."},
+                "trigger_ref": {
+                    "type": "string",
+                    "description": "Ref of a button that opens the native file chooser (use when no input[type=file] is reachable).",
+                },
+                "trigger_selector": {
+                    "type": "string",
+                    "description": "CSS/XPath of the button opening the native file chooser.",
+                },
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Absolute local file paths. For single-file inputs pass one item.",
+                },
+            },
+            "required": ["paths"],
+        },
+    },
+    {
         "name": "scroll",
         "description": "Scroll the page down.",
         "input_schema": {
@@ -974,6 +1007,48 @@ def _create_tool_registry(
             raise ValueError("type_text requires either 'ref' or 'selector'")
         return ToolExecutionResult(output="Successfully typed text.")
 
+    async def _upload_file(args: dict) -> ToolExecutionResult:
+        if not page:
+            raise RuntimeError("No active page")
+        paths = args.get("paths") or []
+        if isinstance(paths, str):
+            paths = [paths]
+        if not paths:
+            raise ValueError("upload_file requires 'paths'")
+        for p in paths:
+            if not os.path.isabs(p):
+                raise ValueError(f"Path must be absolute: {p}")
+            if not os.path.exists(p):
+                raise FileNotFoundError(f"File not found: {p}")
+
+        ref = args.get("ref")
+        selector = args.get("selector")
+        trigger_ref = args.get("trigger_ref")
+        trigger_selector = args.get("trigger_selector")
+
+        if ref or selector:
+            if ref:
+                locator = await pm.locate_by_ref(ref, effective_session_id)
+            else:
+                locator = page.locator(selector).first
+            await locator.set_input_files(paths)
+        elif trigger_ref or trigger_selector:
+            async with page.expect_file_chooser(timeout=10000) as fc_info:
+                if trigger_ref:
+                    trig = await pm.locate_by_ref(trigger_ref, effective_session_id)
+                else:
+                    trig = page.locator(trigger_selector).first
+                await trig.click(timeout=5000)
+            file_chooser = await fc_info.value
+            await file_chooser.set_files(paths)
+        else:
+            raise ValueError(
+                "upload_file requires ref/selector (for the <input type=file>) "
+                "or trigger_ref/trigger_selector (for the opener button)"
+            )
+        await asyncio.sleep(1)
+        return ToolExecutionResult(output=f"Uploaded {len(paths)} file(s).")
+
     async def _scroll(args: dict) -> ToolExecutionResult:
         if not page:
             raise RuntimeError("No active page")
@@ -1170,6 +1245,7 @@ def _create_tool_registry(
     registry.register("navigate", _navigate)
     registry.register("click", _click)
     registry.register("type_text", _type_text)
+    registry.register("upload_file", _upload_file)
     registry.register("scroll", _scroll)
     registry.register("request_human_assistance", _request_human_assistance)
     registry.register("extract_info", _extract_info)
