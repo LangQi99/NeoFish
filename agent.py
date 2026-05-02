@@ -1546,6 +1546,15 @@ async def run_agent_loop(
             tool_id, tool_name, args = _extract_tool_use(tool)
             result_str = ""
 
+            args_json = json.dumps(args, ensure_ascii=False)
+            await emit_info(
+                {
+                    "message": f"Executing action: `{tool_name}` with args: {args_json}",
+                    "message_key": "common.executing_action",
+                    "params": {"tool": tool_name, "args": args_json},
+                }
+            )
+
             try:
                 execution = await tool_registry.execute(tool_name, args)
                 result_str = execution.output
