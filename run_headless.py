@@ -35,6 +35,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent import run_agent_loop
@@ -71,6 +72,8 @@ pm = PlaywrightManager(browser_mode=_INITIAL_MODE)
 
 # Per-session channel where terminal outcomes (completed / needs_input) land.
 _outcomes: dict[str, asyncio.Queue] = {}
+# Per-session broadcast queue for streaming info events (for SSE clients).
+_streams: dict[str, asyncio.Queue] = {}
 # The background asyncio.Task running run_agent_loop for each session.
 _agent_tasks: dict[str, asyncio.Task] = {}
 # Session memory instances kept warm so that follow-up calls reuse task_spec.
@@ -82,6 +85,14 @@ def _outcome_queue(session_id: str) -> asyncio.Queue:
     if q is None:
         q = asyncio.Queue()
         _outcomes[session_id] = q
+    return q
+
+
+def _stream_queue(session_id: str) -> asyncio.Queue:
+    q = _streams.get(session_id)
+    if q is None:
+        q = asyncio.Queue()
+        _streams[session_id] = q
     return q
 
 
@@ -104,10 +115,12 @@ async def _run_agent_once(
     """Drive one invocation of run_agent_loop and feed terminal events into the outcome queue."""
 
     q = _outcome_queue(session_id)
+    sq = _stream_queue(session_id)
 
     async def _send(msg: Any) -> None:
-        # Only surface the final task report to the API caller. All other info
-        # events are swallowed (caller doesn't want the thought stream).
+        # Push every info event to the stream queue for SSE clients.
+        if isinstance(msg, dict):
+            await sq.put({"type": "info", **msg})
         if isinstance(msg, dict) and msg.get("message_key") == "common.task_completed":
             report = msg.get("params", {}).get("report") or msg.get("message", "")
             await q.put({"status": "completed", "output": report})
@@ -116,6 +129,7 @@ async def _run_agent_once(
         payload = {"status": "needs_input", "reason": reason}
         if image:
             payload["screenshot"] = image
+        await sq.put({"type": "needs_input", **payload})
         await q.put(payload)
 
     async def _send_image(description: str, image_b64: str) -> None:
@@ -145,6 +159,7 @@ async def _run_agent_once(
         )
     except Exception as e:
         logger.exception("Agent loop crashed for session %s", session_id)
+        await sq.put({"type": "error", "message": str(e)})
         await q.put({"status": "completed", "output": f"[agent error] {e}"})
     finally:
         session_store.set_running(session_id, False)
@@ -152,6 +167,7 @@ async def _run_agent_once(
         # (e.g. max-steps), synthesize a completed outcome so the HTTP call returns.
         if q.empty():
             await q.put({"status": "completed", "output": "(agent finished without report)"})
+        await sq.put({"type": "done"})
 
 
 # ── FastAPI lifespan ──────────────────────────────────────────────────────────
@@ -273,6 +289,53 @@ async def get_session(session_id: str) -> dict:
         "waiting_for_human": pm.is_waiting_for_human(session_id),
         "browser_mode": pm.browser_mode,
     }
+
+
+@app.post("/v1/chat/stream")
+async def chat_stream(body: ChatBody):
+    """SSE endpoint: start a new agent task and stream all info events until done."""
+    import json as _json
+
+    if not body.message or not body.message.strip():
+        raise HTTPException(status_code=400, detail="message must not be empty")
+
+    session_id = body.session_id
+    if not session_id:
+        chat_id = str(uuid.uuid4())
+        session_id = session_store.get_or_create(PLATFORM, chat_id)
+
+    images = body.images or []
+    # Fresh stream queue for this session
+    _streams[session_id] = asyncio.Queue()
+    sq = _stream_queue(session_id)
+    _outcomes[session_id] = asyncio.Queue()
+
+    if not await session_store.try_start(session_id):
+        raise HTTPException(status_code=409, detail="Session already busy; retry shortly.")
+
+    task = asyncio.create_task(
+        _run_agent_once(session_id, body.message, images),
+        name=f"neofish-agent-{session_id}",
+    )
+    _agent_tasks[session_id] = task
+
+    async def event_gen():
+        yield f"data: {_json.dumps({'type': 'start', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        while True:
+            try:
+                event = await asyncio.wait_for(sq.get(), timeout=120.0)
+            except asyncio.TimeoutError:
+                yield "data: {\"type\":\"heartbeat\"}\n\n"
+                continue
+            yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+            if event.get("type") in ("done", "error"):
+                break
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.delete("/v1/chat/{session_id}")
