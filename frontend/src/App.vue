@@ -28,10 +28,26 @@ const ws = ref<WebSocket | null>(null)
 const isConnected = ref(false)
 const isInTakeover = ref(false)
 const isTaskRunning = ref(false)
+const agentRuntimeStatus = ref<'idle' | 'running' | 'planning' | 'awaiting_approval' | 'completed' | 'cancelled' | 'failed'>('idle')
 const browserFrame = ref('')
 const browserUrl = ref('')
 const browserViewport = ref({ width: 1280, height: 800 })
 let taskPollTimer: number | null = null
+
+const agentStatusLabel = computed(() => {
+  if (!isConnected.value) return t('common.connecting')
+  if (agentRuntimeStatus.value === 'planning') return t('common.agent_planning')
+  if (agentRuntimeStatus.value === 'awaiting_approval') return t('common.agent_awaiting_approval')
+  if (agentRuntimeStatus.value === 'running') return t('common.agent_running')
+  return t('common.agent_ready')
+})
+
+const agentStatusDotClass = computed(() => {
+  if (!isConnected.value) return 'bg-red-500'
+  if (agentRuntimeStatus.value === 'planning') return 'bg-violet-500'
+  if (agentRuntimeStatus.value === 'awaiting_approval') return 'bg-amber-500'
+  return 'bg-green-500'
+})
 
 function connectWs(sessionId: string) {
   if (ws.value) {
@@ -53,7 +69,8 @@ function connectWs(sessionId: string) {
       activeChatId.value = data.session_id
     }
     if (data.type === 'task_status') {
-      isTaskRunning.value = data.status === 'running'
+      agentRuntimeStatus.value = data.status || 'idle'
+      isTaskRunning.value = data.status === 'running' || data.status === 'planning'
       return
     }
     if (data.message_key === 'common.agent_thinking' && !debugMode.value) {
@@ -74,9 +91,16 @@ function connectWs(sessionId: string) {
     }
     if (data.message_key === 'common.agent_starting') {
       isTaskRunning.value = true
+      if (agentRuntimeStatus.value === 'idle') {
+        agentRuntimeStatus.value = 'running'
+      }
     }
     if (data.message_key === 'common.task_completed' || data.message_key === 'common.task_cancelled' || data.message_key === 'common.task_stopped') {
       isTaskRunning.value = false
+      if (data.message_key === 'common.task_completed') agentRuntimeStatus.value = 'completed'
+      if (data.message_key === 'common.task_cancelled' || data.message_key === 'common.task_stopped') {
+        agentRuntimeStatus.value = 'cancelled'
+      }
     }
     pushMessage(data)
     if (shouldRefreshTasks(data)) {
@@ -87,6 +111,7 @@ function connectWs(sessionId: string) {
   socket.onclose = () => {
     isConnected.value = false
     isInTakeover.value = false
+    agentRuntimeStatus.value = 'idle'
     // Re-connect after 3s
     setTimeout(() => {
       if (activeChatId.value) connectWs(activeChatId.value)
@@ -158,7 +183,8 @@ function getToolDisplayName(toolName: string): string {
 
 function shouldRefreshTasks(data: any): boolean {
   const toolName = data?.params?.tool
-  return data?.message_key === 'common.agent_starting' ||
+  return data?.type === 'task_status' ||
+    data?.message_key === 'common.agent_starting' ||
     data?.message_key === 'common.task_completed' ||
     (typeof toolName === 'string' && toolName.startsWith('task_'))
 }
@@ -497,8 +523,8 @@ onUnmounted(() => {
       <header class="absolute top-0 left-0 w-full p-6 flex justify-end gap-3 z-10 pointer-events-none">
         <!-- Agent status indicator + proactive takeover button -->
         <div class="theme-badge pointer-events-auto flex items-center gap-2 rounded-full px-3 py-1.5 backdrop-blur-md">
-          <div class="w-2 h-2 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-red-500'"></div>
-          <span class="theme-text-secondary text-xs font-medium">{{ isConnected ? $t('common.agent_ready') : $t('common.connecting') }}</span>
+          <div class="w-2 h-2 rounded-full" :class="agentStatusDotClass"></div>
+          <span class="theme-text-secondary text-xs font-medium">{{ agentStatusLabel }}</span>
           <!-- Proactive takeover button (only shown during an active chat when not already in takeover) -->
           <button
             v-if="isTaskRunning"

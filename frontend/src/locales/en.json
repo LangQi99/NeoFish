@@ -17,6 +17,9 @@
     "agent_paused_for_takeover": "Agent paused. Waiting for you to finish…",
     "agent_thinking": "Agent is thinking...",
     "agent_resumed": "Agent resumed execution.",
+    "agent_running": "Agent running",
+    "agent_planning": "Planning in progress",
+    "agent_awaiting_approval": "Waiting for plan approval",
     "agent_starting": "Agent starting task: {task}",
     "executing_action": "Executing action: `{tool}` with args: {args}",
     "sent_resume": "Sent resume execution command.",
@@ -95,6 +98,8 @@
     "background_run": "Starting background task",
     "check_background": "Checking background task",
     "send_screenshot": "Taking screenshot",
+    "enter_plan_mode": "Writing plan",
+    "exit_plan_mode": "Submitting plan",
     "compact": "Compressing context",
     "default": "Executing action"
   },
@@ -110,7 +115,9 @@
   "tasks": {
     "toggle": "Tasks",
     "loading_inline": "Syncing tasks",
-    "empty_inline": "No tasks yet"
+    "empty_inline": "No tasks yet",
+    "status_planning": "Planning",
+    "status_awaiting_approval": "Awaiting approval"
   },
   "knowledge": {
     "title": "Knowledge Folders",

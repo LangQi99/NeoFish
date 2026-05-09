@@ -17,6 +17,9 @@
     "agent_paused_for_takeover": "代理已暂停，等待您完成操作…",
     "agent_thinking": "代理正在思考...",
     "agent_resumed": "代理已恢复执行。",
+    "agent_running": "代理执行中",
+    "agent_planning": "正在规划方案",
+    "agent_awaiting_approval": "等待方案审批",
     "agent_starting": "代理开始任务：{task}",
     "executing_action": "正在执行动作：`{tool}`，参数：{args}",
     "sent_resume": "已发送继续执行指令。",
@@ -95,6 +98,8 @@
     "background_run": "正在启动后台任务",
     "check_background": "正在检查后台任务",
     "send_screenshot": "正在截图",
+    "enter_plan_mode": "正在写入计划",
+    "exit_plan_mode": "正在提交计划",
     "compact": "正在压缩上下文",
     "default": "正在执行操作"
   },
@@ -110,7 +115,9 @@
   "tasks": {
     "toggle": "任务面板",
     "loading_inline": "任务同步中",
-    "empty_inline": "暂无任务"
+    "empty_inline": "暂无任务",
+    "status_planning": "规划中",
+    "status_awaiting_approval": "待审批"
   },
   "knowledge": {
     "title": "知识库文件夹",

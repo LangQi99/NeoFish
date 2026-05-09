@@ -14,6 +14,7 @@ class ToolExecutionResult:
     finished: bool = False
     manual_compact: bool = False
     compact_focus: str | None = None
+    stop_loop: bool = False
 
 
 ToolHandler = Callable[[dict], Awaitable[ToolExecutionResult]]
@@ -31,4 +32,3 @@ class ToolRegistry:
         if handler is None:
             return ToolExecutionResult(output=f"Unknown tool: {name}")
         return await handler(args)
-

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 import re
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
@@ -97,6 +98,14 @@ Use knowledge tools to retrieve information from selected knowledge folders:
 
 If you ever encounter a strict login wall, CAPTCHA, or require the user to scan a QR code, you must call the `request_human_assistance` tool. Do NOT give up easily; only ask for help when absolutely necessary.
 When the task is completely finished, call `finish_task`.
+
+## Plan Mode
+You support a dedicated planning workflow:
+- Use `enter_plan_mode` when the task needs research, scoping, or approval before implementation.
+- While planning, do not modify project files or page state outside the dedicated plan file.
+- `enter_plan_mode` can be called again while planning to overwrite the plan file with refined markdown.
+- Use `exit_plan_mode` only when the plan file is ready for user review.
+- After calling `exit_plan_mode`, stop execution and wait for the user's approval or revision feedback.
 
 ## Session Memory
 Throughout the conversation, you must maintain an accurate picture of where you are in the task.
@@ -360,7 +369,13 @@ TOOLS = [
                 "task_id": {"type": "integer"},
                 "status": {
                     "type": "string",
-                    "enum": ["pending", "in_progress", "completed"],
+                    "enum": [
+                        "pending",
+                        "planning",
+                        "awaiting_approval",
+                        "in_progress",
+                        "completed",
+                    ],
                 },
                 "addBlockedBy": {
                     "type": "array",
@@ -430,6 +445,46 @@ TOOLS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "enter_plan_mode",
+        "description": (
+            "Enter planning mode and create or overwrite the session plan file. "
+            "Use this before implementation when you need to investigate first or "
+            "present a plan for approval. You may call it again while planning to "
+            "replace the plan file with refined markdown."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Planning goal or scope summary (optional)",
+                },
+                "plan_markdown": {
+                    "type": "string",
+                    "description": "Full markdown content to write into the plan file (optional)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "exit_plan_mode",
+        "description": (
+            "Submit the current plan for user approval and pause execution. "
+            "Only use this after the plan file is ready."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Short summary of the proposed plan (optional)",
+                }
+            },
+            "required": [],
+        },
+    },
     # Context management
     {
         "name": "compact",
@@ -446,6 +501,165 @@ TOOLS = [
         },
     },
 ]
+
+_PLAN_MODES = {"execution", "planning", "awaiting_approval"}
+_PLAN_ALLOWED_TOOLS = {
+    "snapshot",
+    "read_file",
+    "extract_info",
+    "knowledge_search",
+    "task_list",
+    "task_get",
+    "run_bash",
+    "compact",
+    "request_human_assistance",
+    "send_screenshot",
+    "enter_plan_mode",
+    "exit_plan_mode",
+}
+_PLAN_READ_ONLY_COMMAND_PREFIXES = (
+    "pwd",
+    "ls",
+    "dir",
+    "get-location",
+    "get-childitem",
+    "rg ",
+    "rg.exe ",
+    "type ",
+    "cat ",
+    "git status",
+    "git diff --stat",
+    "git diff --name-only",
+)
+_PLAN_DISALLOWED_COMMAND_SNIPPETS = (
+    ">>",
+    ">",
+    "set-content",
+    "add-content",
+    "out-file",
+    "new-item",
+    "remove-item",
+    "rename-item",
+    "move-item",
+    "copy-item",
+    "del ",
+    "rm ",
+    "mv ",
+    "cp ",
+    "mkdir ",
+    "touch ",
+)
+
+
+def _default_plan_file(session_id: str | None) -> str:
+    suffix = session_id or "current"
+    return f".plans/plan-{suffix}.md"
+
+
+def _normalize_plan_state(
+    plan_state: dict | None, session_id: str | None
+) -> dict[str, str | bool]:
+    state = dict(plan_state or {})
+    mode = str(state.get("mode") or "execution").strip().lower()
+    if mode not in _PLAN_MODES:
+        mode = "execution"
+    state["mode"] = mode
+    state["awaiting_approval"] = mode == "awaiting_approval"
+    state["plan_file"] = str(state.get("plan_file") or _default_plan_file(session_id))
+    return state
+
+
+def _get_tools_for_mode(mode: str) -> list[dict]:
+    if mode == "planning":
+        return [tool for tool in TOOLS if tool["name"] in _PLAN_ALLOWED_TOOLS]
+    if mode == "awaiting_approval":
+        return [tool for tool in TOOLS if tool["name"] in {"enter_plan_mode", "exit_plan_mode"}]
+    return TOOLS
+
+
+def _is_read_only_bash_command(command: str) -> bool:
+    normalized = (command or "").strip().lower()
+    if not normalized:
+        return False
+    if any(snippet in normalized for snippet in _PLAN_DISALLOWED_COMMAND_SNIPPETS):
+        return False
+    return any(normalized.startswith(prefix) for prefix in _PLAN_READ_ONLY_COMMAND_PREFIXES)
+
+
+def _merge_memory_line(existing: str, line: str) -> str:
+    clean_line = (line or "").strip()
+    if not clean_line:
+        return existing
+    lines = [item.strip() for item in existing.splitlines() if item.strip()]
+    if clean_line not in lines:
+        lines.append(clean_line)
+    return "\n".join(lines)
+
+
+def _build_plan_template(goal: str, plan_file: str) -> str:
+    safe_goal = goal.strip() or "Plan the requested work"
+    return (
+        f"# Execution Plan\n\n"
+        f"Plan file: `{plan_file}`\n\n"
+        f"## Goal\n{safe_goal}\n\n"
+        f"## Current Understanding\n- ...\n\n"
+        f"## Risks\n- ...\n\n"
+        f"## Implementation Steps\n1. ...\n\n"
+        f"## Validation\n- ...\n\n"
+        f"## User Confirmation Needed\n- ...\n"
+    )
+
+
+def _build_mode_system_prompt(plan_state: dict) -> str:
+    mode = str(plan_state.get("mode") or "execution")
+    plan_file = str(plan_state.get("plan_file") or "")
+    lines = [
+        "## Runtime Plan State",
+        f"- Current mode: {mode}",
+        f"- Plan file: {plan_file or '(none)'}",
+    ]
+    if mode == "planning":
+        lines.extend(
+            [
+                "- You are in planning mode.",
+                "- Research and analyze only; do not implement changes yet.",
+                "- Use `enter_plan_mode` to create or overwrite the plan markdown.",
+                "- When the plan is ready for review, call `exit_plan_mode`.",
+            ]
+        )
+    elif mode == "awaiting_approval":
+        lines.extend(
+            [
+                "- A plan has already been submitted for approval.",
+                "- Do not continue work until the user approves it or requests changes.",
+            ]
+        )
+    elif plan_file:
+        lines.append(
+            f"- If an approved plan exists in `{plan_file}`, follow it during execution unless the user changes direction."
+        )
+    return "\n".join(lines)
+
+
+def _load_existing_root_task(task_id: int | None) -> dict | None:
+    if not task_id:
+        return None
+    raw = task_manager.get(int(task_id))
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if isinstance(data, dict) and "id" in data:
+        return data
+    return None
+
+
+def _task_status_for_plan_mode(mode: str) -> str:
+    if mode == "planning":
+        return "planning"
+    if mode == "awaiting_approval":
+        return "awaiting_approval"
+    return "in_progress"
 
 
 def _get_block_type(block) -> str:
@@ -796,8 +1010,38 @@ def _create_tool_registry(
     emit_action_required,
     emit_image,
     emit_file,
+    session_memory: SessionMemory,
+    save_session_memory_fn=None,
+    plan_state: dict | None = None,
+    save_plan_state_fn=None,
+    emit_task_status=None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
+    if plan_state is None:
+        current_plan_state = _normalize_plan_state(None, effective_session_id)
+    else:
+        previous_state = dict(plan_state)
+        current_plan_state = plan_state
+        current_plan_state.clear()
+        current_plan_state.update(
+            _normalize_plan_state(previous_state, effective_session_id)
+        )
+
+    def _save_plan_state() -> None:
+        if save_plan_state_fn:
+            save_plan_state_fn(current_plan_state)
+
+    def _save_session_memory() -> None:
+        if save_session_memory_fn:
+            save_session_memory_fn()
+
+    async def _set_runtime_plan_mode(mode: str) -> None:
+        current_plan_state["mode"] = mode
+        current_plan_state["awaiting_approval"] = mode == "awaiting_approval"
+        current_plan_state["updated_at"] = datetime.now().isoformat()
+        if emit_task_status:
+            await emit_task_status("planning" if mode == "planning" else mode)
+        _save_plan_state()
 
     async def _snapshot(args: dict) -> ToolExecutionResult:
         snapshot_text = await pm.get_aria_snapshot(effective_session_id)
@@ -913,8 +1157,18 @@ def _create_tool_registry(
         return ToolExecutionResult(output=f"File sent: {file_path}")
 
     async def _run_bash(args: dict) -> ToolExecutionResult:
+        command = args["command"]
+        if current_plan_state.get("mode") == "planning" and not _is_read_only_bash_command(
+            command
+        ):
+            return ToolExecutionResult(
+                output=(
+                    "Error: run_bash is restricted in planning mode. "
+                    "Only read-only commands like pwd, ls/dir, rg, type/cat, or git status/diff are allowed."
+                )
+            )
         return ToolExecutionResult(
-            output=await workspace.run_bash(args["command"], args.get("timeout", 120))
+            output=await workspace.run_bash(command, args.get("timeout", 120))
         )
 
     async def _task_create(args: dict) -> ToolExecutionResult:
@@ -963,6 +1217,101 @@ def _create_tool_registry(
             output=json.dumps({"results": results}, ensure_ascii=False, indent=2)
         )
 
+    async def _enter_plan_mode(args: dict) -> ToolExecutionResult:
+        goal = str(args.get("goal") or session_memory.get("task_spec") or "").strip()
+        plan_file = str(current_plan_state.get("plan_file") or _default_plan_file(effective_session_id))
+        current_plan_state["plan_file"] = plan_file
+        await _set_runtime_plan_mode("planning")
+
+        plan_markdown = str(args.get("plan_markdown") or "").strip()
+        plan_abs = (WORKDIR / plan_file).resolve()
+        should_seed_template = not plan_abs.exists() and not plan_markdown
+        if should_seed_template:
+            plan_markdown = _build_plan_template(goal, plan_file)
+        if plan_markdown:
+            await workspace.write_file(plan_file, plan_markdown)
+
+        session_memory.update("current_state", "In planning mode")
+        session_memory.update(
+            "important_files",
+            _merge_memory_line(session_memory.get("important_files"), plan_file),
+        )
+        session_memory.update(
+            "pending_tasks",
+            "Draft or refine the plan, then submit it for approval.",
+        )
+        session_memory.update(
+            "workflow",
+            f"Planning mode active. Maintain the proposal in {plan_file} and wait for approval before implementation.",
+        )
+        if auto_root_task:
+            task_manager.update(auto_root_task["id"], status="planning")
+        _save_session_memory()
+
+        if plan_markdown:
+            return ToolExecutionResult(
+                output=(
+                    f"Planning mode enabled. Plan file `{plan_file}` has been written. "
+                    "Continue researching and call `enter_plan_mode` again with refined plan_markdown whenever needed."
+                )
+            )
+        return ToolExecutionResult(
+            output=(
+                f"Planning mode enabled. Use the plan file `{plan_file}` for the proposal. "
+                "Call `enter_plan_mode` again with `plan_markdown` to overwrite it."
+            )
+        )
+
+    async def _exit_plan_mode(args: dict) -> ToolExecutionResult:
+        plan_file = str(current_plan_state.get("plan_file") or _default_plan_file(effective_session_id))
+        plan_abs = (WORKDIR / plan_file).resolve()
+        if not plan_abs.exists():
+            return ToolExecutionResult(
+                output=(
+                    f"Error: plan file `{plan_file}` does not exist yet. "
+                    "Call `enter_plan_mode` with `plan_markdown` first."
+                )
+            )
+
+        plan_text = await workspace.read_file(plan_file)
+        summary = str(args.get("summary") or "").strip()
+        await _set_runtime_plan_mode("awaiting_approval")
+        if summary:
+            current_plan_state["last_summary"] = summary
+
+        session_memory.update("current_state", "Awaiting plan approval")
+        session_memory.update(
+            "important_files",
+            _merge_memory_line(session_memory.get("important_files"), plan_file),
+        )
+        session_memory.update(
+            "pending_tasks",
+            f"Await user approval for the plan in {plan_file}.",
+        )
+        session_memory.update(
+            "workflow",
+            f"Plan submitted for approval. Wait for user confirmation before implementing {plan_file}.",
+        )
+        if auto_root_task:
+            task_manager.update(auto_root_task["id"], status="awaiting_approval")
+        _save_session_memory()
+
+        approval_message = (
+            "Plan ready for approval.\n\n"
+            f"Plan file: `{plan_file}`\n"
+        )
+        if summary:
+            approval_message += f"\nSummary: {summary}\n"
+        approval_message += f"\n```md\n{plan_text[:12000]}\n```"
+        await emit_info({"message": approval_message})
+        return ToolExecutionResult(
+            output=(
+                f"Submitted the plan in `{plan_file}` for approval. "
+                "Pause execution until the user approves it or requests revisions."
+            ),
+            stop_loop=True,
+        )
+
     async def _compact(args: dict) -> ToolExecutionResult:
         focus = args.get("focus")
         return ToolExecutionResult(
@@ -992,6 +1341,8 @@ def _create_tool_registry(
     registry.register("background_run", _background_run)
     registry.register("check_background", _check_background)
     registry.register("knowledge_search", _knowledge_search)
+    registry.register("enter_plan_mode", _enter_plan_mode)
+    registry.register("exit_plan_mode", _exit_plan_mode)
     registry.register("compact", _compact)
 
     return registry
@@ -1018,6 +1369,9 @@ async def run_agent_loop(
     cancel_event: asyncio.Event = None,
     session_memory: SessionMemory | None = None,
     save_session_memory_fn=None,
+    plan_state: dict | None = None,
+    save_plan_state_fn=None,
+    set_runtime_status_fn=None,
 ):
     effective_session_id = web_session_id or session_id
 
@@ -1055,6 +1409,12 @@ async def run_agent_loop(
         if ws_send_file:
             await ws_send_file(file_path, description)
 
+    async def emit_task_status(status: str) -> None:
+        if set_runtime_status_fn:
+            set_runtime_status_fn(status)
+        if message_center:
+            await message_center.publish("task_status", {"status": status})
+
     if not effective_session_id:
         await emit_info(
             {"message": "Error: No session ID provided", "message_key": "common.error"}
@@ -1063,10 +1423,21 @@ async def run_agent_loop(
 
     if session_memory is None:
         session_memory = SessionMemory(session_id=effective_session_id)
+    plan_state = _normalize_plan_state(plan_state, effective_session_id)
+    existing_root_task = _load_existing_root_task(plan_state.get("root_task_id"))
     if not session_memory.get("task_spec"):
         session_memory.update("task_spec", user_instruction)
     if not session_memory.get("current_state"):
-        session_memory.update("current_state", "Task started")
+        if plan_state["mode"] == "planning":
+            session_memory.update("current_state", "In planning mode")
+        elif plan_state["mode"] == "awaiting_approval":
+            session_memory.update("current_state", "Awaiting plan approval")
+        else:
+            session_memory.update("current_state", "Task started")
+    if save_session_memory_fn:
+        save_session_memory_fn()
+    if save_plan_state_fn:
+        save_plan_state_fn(plan_state)
 
     try:
         page = await pm.get_or_create_page(effective_session_id)
@@ -1079,7 +1450,23 @@ async def run_agent_loop(
         )
         return
 
-    auto_root_task = _auto_create_root_task(user_instruction, images, uploaded_files)
+    auto_root_task = existing_root_task or _auto_create_root_task(
+        user_instruction, images, uploaded_files
+    )
+    if auto_root_task and not plan_state.get("root_task_id"):
+        plan_state["root_task_id"] = auto_root_task["id"]
+        if save_plan_state_fn:
+            save_plan_state_fn(plan_state)
+    if auto_root_task:
+        task_manager.update(
+            auto_root_task["id"], status=_task_status_for_plan_mode(plan_state["mode"])
+        )
+
+    await emit_task_status(
+        "planning" if plan_state["mode"] == "planning" else (
+            "awaiting_approval" if plan_state["mode"] == "awaiting_approval" else "running"
+        )
+    )
 
     await emit_info(
         {
@@ -1092,6 +1479,7 @@ async def run_agent_loop(
     messages = history_messages.copy()
     max_steps = 9999999
     is_finished = False
+    stopped_for_plan_approval = False
 
     # Build first user message with context about uploaded files
     context_parts = []
@@ -1129,10 +1517,26 @@ async def run_agent_loop(
             "\n\nA persistent root task has already been auto-created for this request:\n"
             f"- task_id: {auto_root_task['id']}\n"
             f"- subject: {auto_root_task['subject']}\n"
-            "- Its status is already `in_progress`.\n"
+            f"- Its current status is `{_task_status_for_plan_mode(plan_state['mode'])}`.\n"
             "- Do not create a duplicate root task for the same request.\n"
             "- Update this root task when needed and mark it `completed` before calling finish_task.\n"
             "- You may create additional sub-tasks only if they are genuinely useful."
+        )
+
+    if plan_state["mode"] == "planning":
+        user_content[0]["text"] += (
+            "\n\nYou are currently in planning mode."
+            f"\nUse `{plan_state['plan_file']}` as the dedicated plan file."
+            "\nDo not implement changes yet."
+        )
+    elif plan_state["mode"] == "awaiting_approval":
+        user_content[0]["text"] += (
+            "\n\nA plan has already been submitted and is waiting for user approval."
+            "\nDo not continue until the user confirms or requests revisions."
+        )
+    elif plan_state.get("plan_file"):
+        user_content[0]["text"] += (
+            f"\n\nIf there is an approved plan, follow `{plan_state['plan_file']}` during execution."
         )
 
     # Add images as base64 for vision
@@ -1158,6 +1562,7 @@ async def run_agent_loop(
         if cancel_event and cancel_event.is_set():
             if auto_root_task:
                 task_manager.update(auto_root_task["id"], status="pending")
+            await emit_task_status("cancelled")
             await emit_info(
                 {
                     "message": "Task cancelled by user.",
@@ -1233,6 +1638,27 @@ async def run_agent_loop(
             # Reset user_content after compression to avoid appending old data
             user_content = []
 
+        if plan_state["mode"] == "planning":
+            user_content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"Planning reminder: stay in planning mode and keep the proposal in `{plan_state['plan_file']}`. "
+                        "Do not implement changes yet. When the proposal is ready, call `exit_plan_mode`."
+                    ),
+                }
+            )
+        elif plan_state["mode"] == "awaiting_approval":
+            user_content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"Approval reminder: the submitted plan in `{plan_state['plan_file']}` is still waiting for user approval. "
+                        "Do not continue implementation until the user approves it or asks for revisions."
+                    ),
+                }
+            )
+
         # 1. Observe - append observation to user_content
         if page and not page.is_closed():
             try:
@@ -1272,12 +1698,16 @@ async def run_agent_loop(
         )
 
         try:
+            current_tools = _get_tools_for_mode(str(plan_state.get("mode") or "execution"))
+            current_system_prompt = (
+                f"{SYSTEM_PROMPT}\n\n{_build_mode_system_prompt(plan_state)}\n\n{session_memory.get_all()}"
+            )
             response = await client.messages.create(
                 model=model_name,
                 max_tokens=4096,
-                system=f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
+                system=current_system_prompt,
                 messages=messages,
-                tools=TOOLS,
+                tools=current_tools,
             )
             assistant_blocks = response.content
         except Exception as e:
@@ -1298,9 +1728,9 @@ async def run_agent_loop(
                     response = await client.messages.create(
                         model=model_name,
                         max_tokens=4096,
-                        system=f"{SYSTEM_PROMPT}\n\n{session_memory.get_all()}",
+                        system=current_system_prompt,
                         messages=messages,
-                        tools=TOOLS,
+                        tools=current_tools,
                     )
                     assistant_blocks = response.content
                 except Exception as retry_error:
@@ -1334,6 +1764,7 @@ async def run_agent_loop(
 
         manual_compact = False
         manual_compact_focus = None
+        stop_loop = False
         tool_registry = _create_tool_registry(
             pm=pm,
             page=page,
@@ -1343,6 +1774,11 @@ async def run_agent_loop(
             emit_action_required=emit_action_required,
             emit_image=emit_image,
             emit_file=emit_file,
+            session_memory=session_memory,
+            save_session_memory_fn=save_session_memory_fn,
+            plan_state=plan_state,
+            save_plan_state_fn=save_plan_state_fn,
+            emit_task_status=emit_task_status,
         )
 
         for tool in tool_uses:
@@ -1368,6 +1804,10 @@ async def run_agent_loop(
                 if execution.manual_compact:
                     manual_compact = True
                     manual_compact_focus = execution.compact_focus
+                if execution.stop_loop:
+                    stop_loop = True
+                    if str(plan_state.get("mode")) == "awaiting_approval":
+                        stopped_for_plan_approval = True
 
             except Exception as e:
                 result_str = f"Error executing {tool_name}: {str(e)}"
@@ -1390,8 +1830,10 @@ async def run_agent_loop(
 
         if is_finished:
             break
+        if stop_loop:
+            break
 
-    if not is_finished:
+    if not is_finished and not stopped_for_plan_approval:
         if auto_root_task:
             task_manager.update(auto_root_task["id"], status="pending")
         await emit_info(
@@ -1401,8 +1843,14 @@ async def run_agent_loop(
             }
         )
 
-    if is_finished:
+    if stopped_for_plan_approval:
+        session_memory.update("current_state", "Awaiting plan approval")
+        if auto_root_task:
+            task_manager.update(auto_root_task["id"], status="awaiting_approval")
+    elif is_finished:
         session_memory.update("current_state", "Task completed")
+        if auto_root_task:
+            task_manager.update(auto_root_task["id"], status="completed")
     else:
         session_memory.update("current_state", "Task ended (max steps or cancelled)")
 
@@ -1410,3 +1858,8 @@ async def run_agent_loop(
         save_session_memory_fn()
 
     pm.deactivate_tab(effective_session_id)
+    if stopped_for_plan_approval:
+        return "awaiting_approval"
+    if is_finished:
+        return "completed"
+    return "cancelled" if cancel_event and cancel_event.is_set() else "completed"

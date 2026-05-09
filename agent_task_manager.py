@@ -16,6 +16,8 @@ from enum import Enum
 class TaskStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
+    PLANNING = "planning"
+    AWAITING_APPROVAL = "awaiting_approval"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     FAILED = "failed"
@@ -61,12 +63,25 @@ class AgentTaskManager:
         if session_id not in self._tasks:
             return False
         task = self._tasks[session_id]
-        return task.status == TaskStatus.RUNNING and not task.task.done()
+        return task.status in (TaskStatus.RUNNING, TaskStatus.PLANNING) and not task.task.done()
 
     def get_task_status(self, session_id: str) -> Optional[TaskStatus]:
         if session_id not in self._tasks:
             return None
         return self._tasks[session_id].status
+
+    def set_task_status(self, session_id: str, status: TaskStatus | str) -> bool:
+        if session_id not in self._tasks:
+            return False
+        if isinstance(status, str):
+            try:
+                status = TaskStatus(status)
+            except ValueError:
+                return False
+        self._tasks[session_id].status = status
+        if status in (TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.FAILED):
+            self._tasks[session_id].completed_at = datetime.now()
+        return True
 
     async def start_task(
         self, session_id: str, agent_fn: Callable, *args, **kwargs
@@ -83,8 +98,17 @@ class AgentTaskManager:
             task_ref = self._tasks[session_id]
             try:
                 task_ref.status = TaskStatus.RUNNING
-                await agent_fn(*args, cancel_event=cancel_event, **kwargs)
-                task_ref.status = TaskStatus.COMPLETED
+                result = await agent_fn(*args, cancel_event=cancel_event, **kwargs)
+                if task_ref.status != TaskStatus.AWAITING_APPROVAL:
+                    if isinstance(result, TaskStatus):
+                        task_ref.status = result
+                    elif isinstance(result, str):
+                        try:
+                            task_ref.status = TaskStatus(result)
+                        except ValueError:
+                            task_ref.status = TaskStatus.COMPLETED
+                    else:
+                        task_ref.status = TaskStatus.COMPLETED
             except asyncio.CancelledError:
                 task_ref.status = TaskStatus.CANCELLED
             except Exception as e:

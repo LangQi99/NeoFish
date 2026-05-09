@@ -43,6 +43,28 @@ _MIME_TYPES = {
 
 _web_queues: dict[str, asyncio.Queue] = {}
 _web_running: set[str] = set()
+_PLAN_APPROVAL_PHRASES = (
+    "同意",
+    "批准",
+    "通过",
+    "可以执行",
+    "按计划执行",
+    "开始执行",
+    "继续执行",
+    "没问题",
+    "approved",
+    "approve",
+    "go ahead",
+    "looks good",
+    "proceed",
+)
+
+
+def _classify_plan_response(text: str) -> str:
+    normalized = (text or "").strip().lower()
+    if any(phrase in normalized for phrase in _PLAN_APPROVAL_PHRASES):
+        return "approved"
+    return "revise"
 
 
 class WebAdapter(PlatformAdapter):
@@ -119,11 +141,17 @@ class WebAdapter(PlatformAdapter):
         )
 
         task_status = task_manager.get_task_status(self._session_id)
+        initial_status = task_status.value if task_status else None
+        if initial_status is None:
+            meta = self._load_current_meta()
+            plan_state = meta.get("plan_state") if isinstance(meta, dict) else None
+            if isinstance(plan_state, dict) and plan_state.get("mode") == "awaiting_approval":
+                initial_status = "awaiting_approval"
         await self._ws.send_text(
             json.dumps(
                 {
                     "type": "task_status",
-                    "status": task_status.value if task_status else None,
+                    "status": initial_status,
                 }
             )
         )
@@ -200,6 +228,11 @@ class WebAdapter(PlatformAdapter):
             packet = {"type": "info", "message": text}
             await self._send_packet(packet)
             self._append_message("assistant", text)
+            return
+
+        if event_type == "task_status":
+            await self._send_packet({"type": "task_status", "status": payload.get("status")})
+            return
 
     def _is_ws_connected(self) -> bool:
         client_state = getattr(self._ws, "client_state", None)
@@ -312,6 +345,17 @@ class WebAdapter(PlatformAdapter):
             self._append_message_fn(self._session_id, msg)
         if role == "user" and self._update_session_fn:
             pass
+
+    def _load_current_meta(self) -> dict:
+        meta_path = Path("sessions") / self._session_id / "meta.json"
+        if meta_path.exists():
+            try:
+                import orjson
+
+                return orjson.loads(meta_path.read_bytes())
+            except Exception:
+                pass
+        return {}
 
     async def _send_image(self, description: str, b64_image: str) -> None:
         """Send a screenshot / image frame to the frontend."""
@@ -663,29 +707,28 @@ class WebAdapter(PlatformAdapter):
             )
             await self.on_message(unified)
 
+        current_meta = self._load_current_meta()
+
+        def _persist_meta():
+            if self._update_session_fn is None:
+                return
+            self._update_session_fn(self._session_id, current_meta)
+
         def _save_sm():
             if self._update_session_fn is None:
                 return
-            import orjson
-            meta_update = {"session_memory": sm.to_compact_dict() if hasattr(sm, "to_compact_dict") else None}
-            current_meta = {}
-            meta_path = Path("sessions") / self._session_id / "meta.json"
-            if meta_path.exists():
-                try:
-                    current_meta = orjson.loads(meta_path.read_bytes())
-                except Exception:
-                    pass
-            current_meta.update(meta_update)
-            self._update_session_fn(self._session_id, current_meta)
+            current_meta["session_memory"] = (
+                sm.to_compact_dict() if hasattr(sm, "to_compact_dict") else None
+            )
+            _persist_meta()
 
-        sm_data = None
-        meta_path = Path("sessions") / self._session_id / "meta.json"
-        if meta_path.exists():
-            try:
-                import orjson
-                sm_data = orjson.loads(meta_path.read_bytes()).get("session_memory")
-            except Exception:
-                pass
+        def _save_plan_state(plan_state: dict | None):
+            if self._update_session_fn is None:
+                return
+            current_meta["plan_state"] = plan_state
+            _persist_meta()
+
+        sm_data = current_meta.get("session_memory")
         if sm_data:
             from memory.session_memory import SessionMemory
 
@@ -695,6 +738,56 @@ class WebAdapter(PlatformAdapter):
 
             sm = SessionMemory(session_id=self._session_id)
 
+        plan_state = current_meta.get("plan_state")
+        run_instruction = user_msg
+        if isinstance(plan_state, dict) and plan_state.get("mode") == "awaiting_approval":
+            plan_file = plan_state.get("plan_file", ".plans/current-plan.md")
+            decision = _classify_plan_response(user_msg)
+            if decision == "approved":
+                plan_state = dict(plan_state)
+                plan_state["mode"] = "execution"
+                plan_state["awaiting_approval"] = False
+                plan_state["updated_at"] = datetime.now().isoformat()
+                current_meta["plan_state"] = plan_state
+                sm.update("current_state", "Plan approved; ready to execute")
+                sm.update(
+                    "pending_tasks",
+                    f"Execute the approved plan in {plan_file} and validate the result.",
+                )
+                sm.update(
+                    "workflow",
+                    f"Execution resumed from the approved plan in {plan_file}.",
+                )
+                current_meta["session_memory"] = sm.to_compact_dict()
+                _persist_meta()
+                run_instruction = (
+                    "The user approved the current plan. "
+                    f"Switch to execution mode and implement the approved plan in `{plan_file}`.\n"
+                    f"User confirmation: {user_msg or 'Approved.'}"
+                )
+            else:
+                plan_state = dict(plan_state)
+                plan_state["mode"] = "planning"
+                plan_state["awaiting_approval"] = False
+                plan_state["updated_at"] = datetime.now().isoformat()
+                current_meta["plan_state"] = plan_state
+                sm.update("current_state", "In planning mode")
+                sm.update(
+                    "pending_tasks",
+                    f"Revise the plan in {plan_file} based on the user's feedback.",
+                )
+                sm.update(
+                    "workflow",
+                    f"Planning mode resumed. Update {plan_file} according to the latest user feedback.",
+                )
+                current_meta["session_memory"] = sm.to_compact_dict()
+                _persist_meta()
+                run_instruction = (
+                    "The user reviewed the submitted plan and requested changes. "
+                    f"Stay in planning mode and revise `{plan_file}`.\n"
+                    f"User feedback: {user_msg}"
+                )
+
         history = self._build_history()
 
         _web_running.add(self._session_id)
@@ -703,7 +796,7 @@ class WebAdapter(PlatformAdapter):
             try:
                 await self._run_agent(
                     self._pm,
-                    user_msg,
+                    run_instruction,
                     None,
                     lambda reason, img: self.request_action(
                         self._session_id, reason, img
@@ -719,6 +812,11 @@ class WebAdapter(PlatformAdapter):
                     cancel_event=cancel_event,
                     session_memory=sm,
                     save_session_memory_fn=_save_sm,
+                    plan_state=plan_state,
+                    save_plan_state_fn=_save_plan_state,
+                    set_runtime_status_fn=lambda status: task_manager.set_task_status(
+                        self._session_id, status
+                    ),
                 )
             finally:
                 _web_running.discard(self._session_id)

@@ -111,7 +111,7 @@ class TaskManager:
 
         Args:
             task_id: Task ID
-            status: New status (pending, in_progress, completed)
+            status: New status (pending, planning, awaiting_approval, in_progress, completed)
             add_blocked_by: Task IDs this task depends on
             add_blocks: Task IDs that depend on this task
             owner: Owner identifier
@@ -124,7 +124,7 @@ class TaskManager:
 
             # Update status
             if status:
-                valid_statuses = ("pending", "in_progress", "completed")
+                valid_statuses = ("pending", "planning", "awaiting_approval", "in_progress", "completed")
                 if status not in valid_statuses:
                     return f"Error: Invalid status '{status}'. Must be one of {valid_statuses}"
                 task["status"] = status
@@ -190,6 +190,8 @@ class TaskManager:
         lines = []
         status_markers = {
             "pending": "[ ]",
+            "planning": "[plan]",
+            "awaiting_approval": "[wait]",
             "in_progress": "[>]",
             "completed": "[x]"
         }

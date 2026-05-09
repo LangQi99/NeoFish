@@ -102,6 +102,7 @@ def _save_session_meta(sid: str, data: dict) -> None:
         "title": data.get("title", ""),
         "created_at": data.get("created_at", ""),
         "session_memory": data.get("session_memory"),
+        "plan_state": data.get("plan_state"),
     }
     meta_path = _session_dir(sid) / "meta.json"
     meta_path.write_bytes(_orjson.dumps(meta))
@@ -117,6 +118,7 @@ def _new_session(title: str = "") -> dict:
         "created_at": created,
         "messages": [],
         "session_memory": None,
+        "plan_state": None,
     }
     sdir = _session_dir(sid)
     sdir.mkdir(parents=True, exist_ok=True)
@@ -374,6 +376,10 @@ def list_tasks():
     summary = {
         "total": len(tasks),
         "pending": sum(1 for task in tasks if task.get("status") == "pending"),
+        "planning": sum(1 for task in tasks if task.get("status") == "planning"),
+        "awaiting_approval": sum(
+            1 for task in tasks if task.get("status") == "awaiting_approval"
+        ),
         "in_progress": sum(1 for task in tasks if task.get("status") == "in_progress"),
         "completed": sum(1 for task in tasks if task.get("status") == "completed"),
     }

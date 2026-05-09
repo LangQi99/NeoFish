@@ -56,16 +56,32 @@ const visibleTasks = computed(() => props.tasks.slice(0, 10))
               class="flex-shrink-0 text-emerald-500"
             />
             <LoaderCircle
-              v-else-if="task.status === 'in_progress'"
+              v-else-if="task.status === 'in_progress' || task.status === 'planning'"
               :size="16"
-              class="flex-shrink-0 animate-spin text-sky-400"
+              class="flex-shrink-0 animate-spin"
+              :class="task.status === 'planning' ? 'text-violet-400' : 'text-sky-400'"
+            />
+            <Circle
+              v-else-if="task.status === 'awaiting_approval'"
+              :size="14"
+              class="flex-shrink-0 text-amber-500"
             />
             <Circle
               v-else
               :size="14"
               class="flex-shrink-0 theme-text-muted"
             />
-            <span class="theme-text-primary truncate text-sm leading-6">{{ task.subject }}</span>
+            <span class="theme-text-primary truncate text-sm leading-6">
+              {{ task.subject }}
+              <span
+                v-if="task.status === 'planning'"
+                class="ml-1 text-[11px] font-medium text-violet-500"
+              >{{ $t('tasks.status_planning') }}</span>
+              <span
+                v-else-if="task.status === 'awaiting_approval'"
+                class="ml-1 text-[11px] font-medium text-amber-500"
+              >{{ $t('tasks.status_awaiting_approval') }}</span>
+            </span>
           </div>
         </div>
       </div>
