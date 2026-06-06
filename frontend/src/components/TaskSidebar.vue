@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CheckCircle2, ChevronLeft, Circle, LoaderCircle } from 'lucide-vue-next'
-import type { AgentTask } from '../composables/useTasks'
+import { CheckCircle2, ChevronLeft, Circle, LoaderCircle, MinusCircle } from 'lucide-vue-next'
+import type { PlanStep } from '../composables/useTasks'
 
 const props = defineProps<{
-  tasks: ReadonlyArray<AgentTask>
+  steps: ReadonlyArray<PlanStep>
   loading: boolean
 }>()
 
 const isOpen = ref(false)
-const visibleTasks = computed(() => props.tasks.slice(0, 10))
+const visibleSteps = computed(() => props.steps.slice(0, 10))
 </script>
 
 <template>
@@ -30,7 +30,7 @@ const visibleTasks = computed(() => props.tasks.slice(0, 10))
       <div class="theme-scrollbar h-full overflow-y-auto pr-1">
         <div class="space-y-1.5">
           <div
-            v-if="loading && visibleTasks.length === 0"
+            v-if="loading && visibleSteps.length === 0"
             class="flex items-center gap-3 rounded-2xl px-3 py-2.5"
           >
             <LoaderCircle :size="16" class="animate-spin text-sky-400" />
@@ -38,7 +38,7 @@ const visibleTasks = computed(() => props.tasks.slice(0, 10))
           </div>
 
           <div
-            v-else-if="visibleTasks.length === 0"
+            v-else-if="visibleSteps.length === 0"
             class="flex items-center gap-3 rounded-2xl px-3 py-2.5"
           >
             <Circle :size="14" class="theme-text-muted" />
@@ -46,26 +46,31 @@ const visibleTasks = computed(() => props.tasks.slice(0, 10))
           </div>
 
           <div
-            v-for="task in visibleTasks"
-            :key="task.id"
+            v-for="step in visibleSteps"
+            :key="step.id"
             class="theme-card-soft flex items-center gap-3 rounded-2xl px-3 py-2.5"
           >
             <CheckCircle2
-              v-if="task.status === 'completed'"
+              v-if="step.status === 'completed'"
               :size="16"
               class="flex-shrink-0 text-emerald-500"
             />
             <LoaderCircle
-              v-else-if="task.status === 'in_progress'"
+              v-else-if="step.status === 'in_progress'"
               :size="16"
               class="flex-shrink-0 animate-spin text-sky-400"
+            />
+            <MinusCircle
+              v-else-if="step.status === 'skipped'"
+              :size="16"
+              class="flex-shrink-0 theme-text-muted"
             />
             <Circle
               v-else
               :size="14"
               class="flex-shrink-0 theme-text-muted"
             />
-            <span class="theme-text-primary truncate text-sm leading-6">{{ task.subject }}</span>
+            <span class="theme-text-primary truncate text-sm leading-6">{{ step.content }}</span>
           </div>
         </div>
       </div>

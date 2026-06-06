@@ -8,7 +8,7 @@ from pathlib import Path
 from anthropic import AsyncAnthropic
 from playwright_manager import PlaywrightManager
 from workspace_manager import WorkspaceManager
-from task_manager import task_manager
+from planner import plan_manager
 from background_manager import background_manager
 from memory.session_memory import SessionMemory
 from knowledge_service import KnowledgeService
@@ -102,15 +102,14 @@ You have two complementary ways to observe the current state of the page:
 - Use `run_bash` to execute shell commands (blocking, with timeout)
 - Use `background_run` for long-running commands (non-blocking)
 
-## Task Management
-Tasks persist across context compression. Use them to track progress on complex tasks:
-- `task_create` - Create a new task with subject and description
-- `task_list` - List all tasks with their status
-- `task_get` - Get full details of a specific task
-- `task_update` - Update task status or dependencies
-- For non-trivial multi-step requests, maintain persistent task state proactively.
-- If the system tells you a root task was auto-created, do not create a duplicate root task.
-- When such a root task exists, keep it updated and mark it completed before `finish_task`.
+## Planning
+Maintain a dynamic plan that persists across context compression:
+- `plan_write` - Create or fully rewrite the ordered list of steps. Re-plan freely whenever the situation changes.
+- `plan_update_step` - Mark a single step in_progress/completed/skipped, or edit its content.
+- `plan_read` - Read the current plan.
+- For non-trivial multi-step requests, write a plan first and keep step statuses up to date as you work.
+- If the system says a plan was auto-initialized for this request, build on it with `plan_write` instead of starting from scratch. Mark all steps completed before `finish_task`.
+- Never expose internal plan/step IDs or status bookkeeping in user-facing reports.
 
 ## Background Tasks
 For commands that take a long time:
@@ -390,59 +389,73 @@ TOOLS = [
             "required": ["command"],
         },
     },
-    # Task management tools
+    # Planner tools
     {
-        "name": "task_create",
-        "description": "Create a new task that persists across context compression.",
+        "name": "plan_write",
+        "description": (
+            "Create or completely overwrite the current plan. Use this to "
+            "dynamically (re)plan at any time: pass the full ordered list of "
+            "steps. Existing steps are replaced."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "subject": {"type": "string", "description": "Brief task title"},
-                "description": {
+                "goal": {
                     "type": "string",
-                    "description": "Detailed task description (optional)",
+                    "description": "Overall goal (optional)",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Short plan title (optional)",
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {
+                                "type": "string",
+                                "description": "Step description",
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": [
+                                    "pending",
+                                    "in_progress",
+                                    "completed",
+                                    "skipped",
+                                ],
+                            },
+                        },
+                        "required": ["content"],
+                    },
                 },
             },
-            "required": ["subject"],
+            "required": ["steps"],
         },
     },
     {
-        "name": "task_get",
-        "description": "Get full details of a task by ID.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"task_id": {"type": "integer"}},
-            "required": ["task_id"],
-        },
-    },
-    {
-        "name": "task_update",
-        "description": "Update a task's status or dependencies.",
+        "name": "plan_update_step",
+        "description": (
+            "Update a single step's status or content without rewriting the "
+            "whole plan."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "integer"},
+                "step_id": {"type": "integer"},
                 "status": {
                     "type": "string",
-                    "enum": ["pending", "in_progress", "completed"],
+                    "enum": ["pending", "in_progress", "completed", "skipped"],
                 },
-                "addBlockedBy": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "Task IDs this task depends on",
-                },
-                "addBlocks": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "Task IDs that depend on this task",
-                },
+                "content": {"type": "string"},
             },
-            "required": ["task_id"],
+            "required": ["step_id"],
         },
     },
     {
-        "name": "task_list",
-        "description": "List all tasks with their status.",
+        "name": "plan_read",
+        "description": "Read the current plan with all steps and their status.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     # Background task tools
@@ -723,8 +736,8 @@ async def auto_compact(messages: list, focus: str = None) -> list:
         for msg in messages:
             f.write(json.dumps(msg, default=str, ensure_ascii=False) + "\n")
 
-    # Get current task state for context
-    task_summary = task_manager.list_all()
+    # Get current plan state for context
+    task_summary = plan_manager.render()
 
     # Build summary prompt
     conversation_text = json.dumps(messages, default=str, ensure_ascii=False)[:80000]
@@ -822,10 +835,9 @@ _TASK_ACTION_HINTS = (
 )
 
 _EXPLICIT_TASK_HINTS = (
-    "task_create",
-    "task_update",
-    "task_get",
-    "task_list",
+    "plan_write",
+    "plan_update_step",
+    "plan_read",
     "创建一个任务",
     "创建任务",
     "更新任务",
@@ -839,7 +851,7 @@ def _contains_explicit_task_request(text: str) -> bool:
     return any(hint.lower() in lowered for hint in _EXPLICIT_TASK_HINTS)
 
 
-def _should_auto_create_task(
+def _should_auto_init_plan(
     instruction: str, images: list, uploaded_files: list
 ) -> bool:
     text = (instruction or "").strip()
@@ -873,31 +885,28 @@ def _should_auto_create_task(
     return signal_score >= 2
 
 
-def _build_auto_task_subject(instruction: str) -> str:
+def _build_auto_plan_title(instruction: str) -> str:
     clean = re.sub(r"https?://\S+", lambda m: m.group(0)[:28], instruction).strip()
     clean = re.sub(r"^(请|帮我|麻烦|请帮我|帮忙)\s*", "", clean)
     clean = re.sub(r"\s+", " ", clean)
     first_sentence = re.split(r"[。！？\n]", clean, maxsplit=1)[0]
-    subject = first_sentence[:28].strip()
+    title = first_sentence[:28].strip()
     if len(first_sentence) > 28:
-        subject += "…"
-    return subject or "执行用户请求"
+        title += "…"
+    return title or "执行用户请求"
 
 
-def _auto_create_root_task(
+def _auto_init_plan(
     instruction: str, images: list, uploaded_files: list
 ) -> dict | None:
-    if not _should_auto_create_task(instruction, images, uploaded_files):
+    if not _should_auto_init_plan(instruction, images, uploaded_files):
         return None
 
-    created = task_manager.create(
-        subject=_build_auto_task_subject(instruction),
-        description=instruction.strip(),
+    plan_manager.clear()
+    return plan_manager.set_goal(
+        goal=instruction.strip(),
+        title=_build_auto_plan_title(instruction),
     )
-    task = json.loads(created)
-    task_manager.update(task["id"], status="in_progress")
-    task["status"] = "in_progress"
-    return task
 
 
 def _normalize_info_payload(msg) -> dict:
@@ -911,7 +920,7 @@ def _create_tool_registry(
     pm: PlaywrightManager,
     page,
     effective_session_id: str,
-    auto_root_task: dict | None,
+    auto_plan: dict | None,
     emit_info,
     emit_action_required,
     emit_image,
@@ -1083,8 +1092,8 @@ def _create_tool_registry(
 
     async def _finish_task(args: dict) -> ToolExecutionResult:
         report = args.get("report", "Task completed.")
-        if auto_root_task:
-            task_manager.update(auto_root_task["id"], status="completed")
+        if auto_plan:
+            plan_manager.mark_all("completed")
         await emit_info(
             {
                 "message": f"✅ **Task Completed**:\n\n{report}",
@@ -1125,26 +1134,26 @@ def _create_tool_registry(
             output=await workspace.run_bash(args["command"], args.get("timeout", 120))
         )
 
-    async def _task_create(args: dict) -> ToolExecutionResult:
+    async def _plan_write(args: dict) -> ToolExecutionResult:
         return ToolExecutionResult(
-            output=task_manager.create(args["subject"], args.get("description", ""))
-        )
-
-    async def _task_get(args: dict) -> ToolExecutionResult:
-        return ToolExecutionResult(output=task_manager.get(args["task_id"]))
-
-    async def _task_update(args: dict) -> ToolExecutionResult:
-        return ToolExecutionResult(
-            output=task_manager.update(
-                args["task_id"],
-                args.get("status"),
-                args.get("addBlockedBy"),
-                args.get("addBlocks"),
+            output=plan_manager.write(
+                steps=args.get("steps", []),
+                goal=args.get("goal"),
+                title=args.get("title"),
             )
         )
 
-    async def _task_list(args: dict) -> ToolExecutionResult:
-        return ToolExecutionResult(output=task_manager.list_all())
+    async def _plan_update_step(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            output=plan_manager.update_step(
+                args["step_id"],
+                args.get("status"),
+                args.get("content"),
+            )
+        )
+
+    async def _plan_read(args: dict) -> ToolExecutionResult:
+        return ToolExecutionResult(output=plan_manager.render())
 
     async def _background_run(args: dict) -> ToolExecutionResult:
         return ToolExecutionResult(
@@ -1256,10 +1265,9 @@ def _create_tool_registry(
     registry.register("edit_file", _edit_file)
     registry.register("send_file", _send_file)
     registry.register("run_bash", _run_bash)
-    registry.register("task_create", _task_create)
-    registry.register("task_get", _task_get)
-    registry.register("task_update", _task_update)
-    registry.register("task_list", _task_list)
+    registry.register("plan_write", _plan_write)
+    registry.register("plan_update_step", _plan_update_step)
+    registry.register("plan_read", _plan_read)
     registry.register("background_run", _background_run)
     registry.register("check_background", _check_background)
     registry.register("knowledge_search", _knowledge_search)
@@ -1423,7 +1431,7 @@ async def run_agent_loop(
         )
         return
 
-    auto_root_task = _auto_create_root_task(user_instruction, images, uploaded_files)
+    auto_plan = _auto_init_plan(user_instruction, images, uploaded_files)
 
     await emit_info(
         {
@@ -1468,16 +1476,16 @@ async def run_agent_loop(
             {"type": "text", "text": f"Please execute this task: {user_instruction}"}
         ]
 
-    if auto_root_task:
+    if auto_plan:
         user_content[0]["text"] += (
-            "\n\nA persistent root task has already been auto-created for this request:\n"
-            f"- task_id: {auto_root_task['id']}\n"
-            f"- subject: {auto_root_task['subject']}\n"
-            "- Its status is already `in_progress`.\n"
-            "- Do not create a duplicate root task for the same request.\n"
-            "- Update this root task when needed and mark it `completed` before calling finish_task.\n"
-            "- Do NOT mention root-task IDs, status updates, or any internal task management in user-facing reports."
-            "\n- You may create additional sub-tasks only if they are genuinely useful."
+            "\n\nA plan has been auto-initialized for this request:\n"
+            f"- goal: {auto_plan.get('goal', '')}\n"
+            "- It currently has no steps. Use `plan_write` to lay out the ordered "
+            "steps, then keep their status updated as you work.\n"
+            "- Re-plan with `plan_write` whenever the situation changes.\n"
+            "- Mark all steps completed before calling finish_task.\n"
+            "- Do NOT mention internal plan/step IDs or status bookkeeping in "
+            "user-facing reports."
         )
 
     # Add images as base64 for vision
@@ -1501,8 +1509,8 @@ async def run_agent_loop(
 
     for step in range(max_steps):
         if cancel_event and cancel_event.is_set():
-            if auto_root_task:
-                task_manager.update(auto_root_task["id"], status="pending")
+            if auto_plan:
+                plan_manager.pause()
             await emit_info(
                 {
                     "message": "Task cancelled by user.",
@@ -1650,7 +1658,7 @@ async def run_agent_loop(
             pm=pm,
             page=page,
             effective_session_id=effective_session_id,
-            auto_root_task=auto_root_task,
+            auto_plan=auto_plan,
             emit_info=emit_info,
             emit_action_required=emit_action_required,
             emit_image=emit_image,
@@ -1701,8 +1709,8 @@ async def run_agent_loop(
             break
 
     if not is_finished:
-        if auto_root_task:
-            task_manager.update(auto_root_task["id"], status="pending")
+        if auto_plan:
+            plan_manager.pause()
         await emit_info(
             {
                 "message": "⚠️ Task reached maximum steps without calling finish_task.",

@@ -17,7 +17,7 @@ import { extractSessionPreview } from './utils/sessionPreview'
 
 const { t } = useI18n()
 const { sessions, activeChatId, loadSessions, createNewChat, refreshSession } = useChatHistory()
-const { tasks, loadTasks, isLoading: tasksLoading } = useTasks()
+const { steps, loadTasks, isLoading: tasksLoading } = useTasks()
 const { loadFolderFiles } = useKnowledge()
 const { debugMode } = useDebugMode()
 useThemeMode()
@@ -517,7 +517,7 @@ onUnmounted(() => {
       <div v-if="mainView === 'chat'" class="pointer-events-none absolute bottom-6 right-0 top-24 z-20 hidden min-[1280px]:block">
         <div class="pointer-events-auto h-full">
           <TaskSidebar
-            :tasks="tasks"
+            :steps="steps"
             :loading="tasksLoading"
           />
         </div>

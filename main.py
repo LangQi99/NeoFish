@@ -19,7 +19,7 @@ from memory.session_memory import SessionMemory
 from playwright_manager import PlaywrightManager
 from agent import run_agent_loop
 from platforms.web import WebAdapter
-from task_manager import task_manager
+from planner import plan_manager
 from knowledge_service import KnowledgeService
 
 pm = PlaywrightManager()
@@ -393,14 +393,20 @@ def get_messages(session_id: str):
 
 @app.get("/tasks")
 def list_tasks():
-    tasks = task_manager.list_tasks()
+    plan = plan_manager.get_plan()
+    steps = plan.get("steps", [])
     summary = {
-        "total": len(tasks),
-        "pending": sum(1 for task in tasks if task.get("status") == "pending"),
-        "in_progress": sum(1 for task in tasks if task.get("status") == "in_progress"),
-        "completed": sum(1 for task in tasks if task.get("status") == "completed"),
+        "total": len(steps),
+        "pending": sum(1 for s in steps if s.get("status") == "pending"),
+        "in_progress": sum(1 for s in steps if s.get("status") == "in_progress"),
+        "completed": sum(1 for s in steps if s.get("status") == "completed"),
+        "skipped": sum(1 for s in steps if s.get("status") == "skipped"),
     }
-    return {"tasks": tasks, "summary": summary}
+    return {
+        "plan": {"goal": plan.get("goal", ""), "title": plan.get("title", "")},
+        "steps": steps,
+        "summary": summary,
+    }
 
 
 class CreateKnowledgeFolder(BaseModel):
