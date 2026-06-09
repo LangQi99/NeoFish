@@ -30,6 +30,7 @@
     "context_compressing": "上下文达到阈值，正在压缩...",
     "manual_compressing": "手动压缩已触发...",
     "image_input_disabled": "当前模型网关不接受图片输入，已自动切换为纯文本模式继续执行。",
+    "error": "发生错误：{message}",
     "file_sent": "文件已发送",
     "click_to_download": "点击下载"
   },

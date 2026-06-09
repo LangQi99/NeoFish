@@ -120,6 +120,47 @@ For commands that take a long time:
 Use knowledge tools to retrieve information from selected knowledge folders:
 - `knowledge_search` - Semantic search over selected knowledge folders (FAISS-backed)
 
+## OpenUI responses
+The web frontend can render OpenUI from https://www.openui.com/ when you return plain assistant text without tools. Use OpenUI for final or intermediate answers that benefit from structured UI such as summaries, comparisons, tables, charts, steps, callouts, galleries, or follow-up actions. Keep using Markdown for short plain text answers.
+
+When emitting OpenUI, the entire assistant text must be valid openui-lang code and must not include Markdown outside the code. Do not call tools or update plans before a pure OpenUI answer; just return the OpenUI code as plain assistant text. Do not use OpenUI inside `finish_task.report`, because completion messages are rendered as Markdown.
+
+OpenUI basics:
+- Every statement is on its own line: `identifier = Expression`.
+- Every program must define `root = Card([...])`.
+- Use positional arguments only. Never use named arguments such as `variant="default"`, `xLabel="日期"`, or `size="medium"`.
+- Every variable except `root` must be referenced by another variable.
+- Strings use double quotes with backslash escaping.
+
+Available chat components:
+- `Card([children])`
+- `CardHeader(title?, subtitle?)`
+- `TextContent(text, size?)`
+- `MarkDownRenderer(textMarkdown, variant?)`
+- `Callout(variant, title, description)`
+- `TextCallout(variant?, title?, description?)`
+- `CodeBlock(language, codeString)`
+- `Separator(orientation?, decorative?)`
+- `Table([Col(...)])` and `Col(label, data, type?)`
+- `BarChart(labels, [Series(...)], variant?, xLabel?, yLabel?)`, `LineChart(labels, [Series(...)], variant?, xLabel?, yLabel?)`, `AreaChart(labels, [Series(...)], variant?, xLabel?, yLabel?)`, `HorizontalBarChart(labels, [Series(...)], variant?, xLabel?, yLabel?)`, `RadarChart(labels, [Series(...)])`, and `Series(category, values)`
+- `PieChart(labels, values, variant?, appearance?)`, `RadialChart(labels, values)`, `SingleStackedBarChart(labels, values)`
+- `Steps([StepsItem(...)])`, `StepsItem(title, details)`. Do not pass a status argument.
+- `TagBlock(["label", "label"])`. Do not put `Tag(...)` inside `TagBlock`.
+- `Tag(text, icon?, size?, variant?)` can be used outside `TagBlock` only.
+- `FollowUpBlock([FollowUpItem(...)])`, `FollowUpItem(text)`
+- `ListBlock([ListItem(...)])`, `ListItem(title, description?)`
+
+Minimal example:
+```
+header = CardHeader("Analysis ready", "Key findings")
+summary = TextContent("The highest-impact item is listed first.")
+table = Table([Col("Metric", ["Latency", "Cost"]), Col("Value", [120, 42], "number")])
+chart = LineChart(["Mon", "Tue", "Wed"], [Series("Users", [120, 160, 210])], "linear", "Day", "Users")
+steps = Steps([StepsItem("Collect data", "Completed"), StepsItem("Render UI", "In progress")])
+tags = TagBlock(["OpenUI", "Table", "LineChart"])
+root = Card([header, summary, table, chart, steps, tags])
+```
+
 If you ever encounter a strict login wall, CAPTCHA, or require the user to scan a QR code, you must call the `request_human_assistance` tool. Do NOT give up easily; only ask for help when absolutely necessary.
 When the task is completely finished, call `finish_task`.
 
@@ -911,7 +952,14 @@ def _auto_init_plan(
 
 def _normalize_info_payload(msg) -> dict:
     if isinstance(msg, dict):
-        return msg
+        payload = dict(msg)
+        if payload.get("message_key") == "common.error":
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                params = {}
+            params.setdefault("message", payload.get("message", ""))
+            payload["params"] = params
+        return payload
     return {"message": str(msg)}
 
 

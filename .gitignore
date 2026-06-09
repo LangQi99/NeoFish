@@ -2,6 +2,8 @@ CLAUDE.md
 reference/
 .vscode/
 .env
+.plan/
+.trae/
 sessions.json
 platform_sessions.json
 browser_state/
@@ -15,6 +17,7 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/dist-ssr/
+frontend/test-artifacts/
 *.local
 # vue-tsc type-check artifacts
 frontend/src/**/*.vue.js

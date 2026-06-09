@@ -8,6 +8,7 @@ import BrowserView from './components/BrowserView.vue'
 import ThinkingChain from './components/ThinkingChain.vue'
 import TaskSidebar from './components/TaskSidebar.vue'
 import KnowledgeWorkspace from './components/KnowledgeWorkspace.vue'
+import OpenUIRenderer from './components/OpenUIRenderer.vue'
 import { useChatHistory } from './composables/useChatHistory'
 import { useTasks } from './composables/useTasks'
 import { useDebugMode } from './composables/useDebugMode'
@@ -191,6 +192,18 @@ function renderMarkdown(text: string): string {
   return marked.parse(text) as string
 }
 
+function getMessageParams(msg: { message_key?: string; params?: Record<string, any>; message?: string }): Record<string, any> {
+  if (msg.message_key === 'common.error' && !msg.params?.message) {
+    return { ...(msg.params || {}), message: msg.message || '' }
+  }
+  return msg.params || {}
+}
+
+function isOpenUIContent(text: string): boolean {
+  const trimmed = text.trim()
+  return trimmed.includes('root = ') && /^[a-zA-Z_$][\w$]*\s*=/.test(trimmed)
+}
+
 interface ThinkingStep {
   type: 'thinking' | 'tool'
   content: string
@@ -291,7 +304,7 @@ function buildSessionPreview(items: ReadonlyArray<any>): string {
         return msg.params?.report || ''
       }
       if (msg.message_key) {
-        return t(msg.message_key, msg.params || {})
+        return t(msg.message_key, getMessageParams(msg))
       }
       return msg.message || msg.content || ''
     },
@@ -358,7 +371,7 @@ async function switchToSession(id: string) {
         type: m.role === 'user' ? 'user' : 'info',
         message: m.content,
         message_key: m.message_key || translateMessageFallback(m.content).message_key,
-        params: m.params || translateMessageFallback(m.content).params,
+        params: m.params || (m.message_key === 'common.error' ? { message: m.content } : translateMessageFallback(m.content).params),
         images: m.images ?? [],
       }
     })
@@ -397,6 +410,10 @@ function handleUserSubmit(payload: { text: string; images: string[]; files: { na
   if (sid && session && (!session.title || session.title === 'New Chat')) {
     refreshSession(sid, { title: (text || '📷 Image').slice(0, 40) })
   }
+}
+
+function handleOpenUIAction(message: string) {
+  handleUserSubmit({ text: message, images: [], files: [] })
 }
 
 function resumeAgent() {
@@ -571,9 +588,16 @@ onUnmounted(() => {
               <div class="theme-button-strong flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full">
                 <span class="text-[10px] font-bold">AI</span>
               </div>
+              <OpenUIRenderer
+                v-if="!msg.message_key && isOpenUIContent(msg.message || '')"
+                class="min-w-0 flex-1"
+                :content="msg.message || ''"
+                @action="handleOpenUIAction"
+              />
               <div 
+                v-else
                 class="theme-prose text-[15px] leading-relaxed font-serif prose prose-sm max-w-none"
-                v-html="renderMarkdown(msg.message_key ? $t(msg.message_key, msg.params || {}) : msg.message || '')"
+                v-html="renderMarkdown(msg.message_key ? $t(msg.message_key, getMessageParams(msg)) : msg.message || '')"
               ></div>
             </div>
 
