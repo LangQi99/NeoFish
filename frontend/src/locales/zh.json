@@ -112,6 +112,12 @@
   },
   "tasks": {
     "toggle": "任务面板",
+    "title": "任务进度",
+    "progress": "已完成 {completed} / {total}",
+    "in_progress": "进行中",
+    "pending": "待处理",
+    "done": "完成",
+    "more_steps": "还有 {count} 个步骤",
     "loading_inline": "任务同步中",
     "empty_inline": "暂无任务"
   },
