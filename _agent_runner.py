@@ -17,10 +17,62 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from config import QQ_QUIET_MODE
 from message import UnifiedMessage
 from session import SessionStore
 
 logger = logging.getLogger(__name__)
+
+_QUIET_QQ_MESSAGE_KEYS = {
+    "common.connected_ws",
+    "common.context_compressing",
+    "common.manual_compressing",
+    "common.agent_resumed",
+    "common.sent_resume",
+    "common.message_queued",
+    "common.agent_starting",
+    "common.agent_thinking",
+    "common.executing_action",
+    "common.takeover_browser_opened",
+    "common.takeover_ended_message",
+    "common.agent_paused_for_takeover",
+}
+
+_QUIET_QQ_TEXT_PREFIXES = (
+    "Connected to NeoFish Agent WebSocket",
+    "Agent is thinking",
+    "Agent starting task:",
+    "Executing action:",
+    "[Takeover]",
+    "[Takeover Ended]",
+)
+
+_QUIET_QQ_TEXT_SNIPPETS = (
+    "Context threshold reached",
+    "Manual compression triggered",
+    "已发送继续执行",
+    "Agent paused for manual takeover",
+)
+
+
+def _should_suppress_message_for_platform(msg, platform: str) -> bool:
+    """Return True for routine progress messages hidden in quiet QQ mode."""
+    if platform != "qq" or not QQ_QUIET_MODE:
+        return False
+
+    if isinstance(msg, dict):
+        if msg.get("message_key") in _QUIET_QQ_MESSAGE_KEYS:
+            return True
+        text = str(msg.get("message", ""))
+    else:
+        text = str(msg)
+
+    if not text:
+        return False
+
+    return any(text.startswith(prefix) for prefix in _QUIET_QQ_TEXT_PREFIXES) or any(
+        snippet in text for snippet in _QUIET_QQ_TEXT_SNIPPETS
+    )
 
 
 def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path = None, scheduler_service=None) -> Callable:
@@ -124,6 +176,8 @@ def make_message_handler(adapter, pm, session_store: SessionStore, workdir: Path
 
         try:
             async def _send(msg) -> None:
+                if _should_suppress_message_for_platform(msg, unified_msg.platform):
+                    return
                 text = msg.get("message", "") if isinstance(msg, dict) else str(msg)
                 await adapter.send_message(session_id, text)
 
