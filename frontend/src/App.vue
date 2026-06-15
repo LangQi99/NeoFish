@@ -18,7 +18,7 @@ import { extractSessionPreview } from './utils/sessionPreview'
 
 const { t } = useI18n()
 const { sessions, activeChatId, loadSessions, createNewChat, refreshSession } = useChatHistory()
-const { steps, loadTasks, isLoading: tasksLoading } = useTasks()
+const { steps, summary: taskSummary, loadTasks, isLoading: tasksLoading } = useTasks()
 const { loadFolderFiles } = useKnowledge()
 const { debugMode } = useDebugMode()
 useThemeMode()
@@ -535,6 +535,7 @@ onUnmounted(() => {
         <div class="pointer-events-auto h-full">
           <TaskSidebar
             :steps="steps"
+            :summary="taskSummary"
             :loading="tasksLoading"
           />
         </div>

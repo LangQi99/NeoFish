@@ -112,6 +112,12 @@
   },
   "tasks": {
     "toggle": "Tasks",
+    "title": "Task Progress",
+    "progress": "{completed} / {total} completed",
+    "in_progress": "Active",
+    "pending": "Pending",
+    "done": "Done",
+    "more_steps": "{count} more steps",
     "loading_inline": "Syncing tasks",
     "empty_inline": "No tasks yet"
   },
