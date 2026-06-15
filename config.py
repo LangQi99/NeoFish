@@ -49,6 +49,15 @@ QQ_ALLOWED_IDS: list[str] = (
     else []
 )
 
+# Suppress routine agent progress messages in QQ chats while keeping final
+# answers, errors, files, images, and human-assistance prompts.
+QQ_QUIET_MODE: bool = os.getenv("QQ_QUIET_MODE", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 # ── Telegram platform ─────────────────────────────────────────────────────────
 
 # Obtain a token from @BotFather on Telegram.
