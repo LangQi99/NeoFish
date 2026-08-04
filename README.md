@@ -39,6 +39,18 @@
 - 🧠 **智能停顿与人工介入**: 当 Agent 遇到阻碍（如遇到验证码、需要扫码登录时），会自动暂停并截取当前画面发送给用户，等待人类确认后继续执行。
 - 🛠️ **极简配置接入**: 通过标准 `.env` 配置，轻松接入任何支持工具调用 (Tool Use) 的大模型 API（默认兼容 Anthropic/OpenAI 接口规范）。
 
+## 🎬 视频演示
+
+> 想直观感受 NeoFish 的能力？点击下方封面跳转 Bilibili 观看完整演示视频：
+
+<p align="center">
+  <a href="https://www.bilibili.com/video/BV1vnAnzgE1d" target="_blank" rel="noopener noreferrer">
+    <img src="docs/readme_img/video_cover_play.jpg" alt="▶ 【Neofish首发】人人可用的浏览器Agent，自动化处理一切，你的终极数字奴隶！" width="720">
+  </a>
+</p>
+
+📺 视频链接：[【Neofish首发】人人可用的浏览器Agent，自动化处理一切，你的终极数字奴隶！](https://www.bilibili.com/video/BV1vnAnzgE1d)
+
 ## 🏗️ 架构概览
 
 NeoFish 采用轻量级的前后端分离架构设计：
